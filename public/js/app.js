@@ -1,1120 +1,261 @@
 'use strict';
 
-(function () {
-  const API_BASE = '/api';
+(() => {
+  const store = new EventTarget();
+  store.token = null;
+  store.config = null;
+  store.places = [];
+  store.tags = [];
+  store.filter = [];
+  store.route = null;
 
-  const state = { map: null, token: null, addPlaceMode: false, pendingLngLat: null, markers: {}, filter: { tagIds: [], mode: 'any' } };
-
-  const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-  // DOM refs — assigned in init() after the DOM is ready.
-  let appConfig = null;
-  let authView, loginForm, loginEmail, loginPassword, loginError;
-  let loginSection, registerSection, showRegisterLink, showLoginLink;
-  let registerForm, registerEmail, registerPassword, registerPasswordConfirm, registerError, registerSuccess;
-  let passwordRequirements, passwordPolicy = null, autoVerifyNewAccounts = false;
-  let verifySection, verifyMessage, resendForm, resendEmail, resendError, resendSuccess, verifyToLoginLink;
-  let mapContainer, mapCustomControls, addPlaceBtn, logoutBtn;
-  let createPlaceDialog, createPlaceForm, placeName, placeDescription, createPlaceError, cancelCreatePlaceBtn;
-  let editPlaceDialog, editPlaceForm, editPlaceName, editPlaceDescription, editPlaceTagsList, editPlaceAllTagsList, editPlaceError, cancelEditPlaceBtn, deleteEditPlaceBtn, movePlaceBtn;
-  let manageTagsBtn, manageTagsDialog, tagForm, tagFormName, tagFormColor, tagFormEmoji, tagFormError, tagFormCancelBtn, tagFormSubmit, tagManagerList, closeManageTagsBtn;
-  let editPlaceTags = [];
-  let editPlaceAllTags = [];
-  let manageTags = [];
-  let manageTagsDirty = false;
-  let openPopup = null;
-  let filterBtn, filterDialog, filterTagsList, filterClearBtn, filterCancelBtn, filterApplyBtn;
-  let filterTags = [];
-  let filterStagedIds = new Set();
-
-  /**
-   * Create a DOM element with classes, text, attributes, dataset, and children.
-   * @param {string} tag - HTML tag name
-   * @param {Object} [options]
-   * @param {string[]} [options.classes] - CSS classes to add
-   * @param {string} [options.text] - textContent
-   * @param {string} [options.title] - title attribute (tooltip)
-   * @param {Object<string,string>} [options.dataset] - data-* attributes (camelCase keys)
-   * @param {Object<string,string>} [options.attrs] - other attributes (e.g., aria-*)
-   * @param {Element[]} [options.children] - children to append in order
-   * @returns {HTMLElement}
-   */
-  function el(tag, { classes = [], text, title, dataset = {}, attrs = {}, children = [] } = {}) {
-    const node = document.createElement(tag);
-    if (classes.length) node.classList.add(...classes);
-    if (text !== undefined) node.textContent = text;
-    if (title !== undefined) node.title = title;
-    Object.assign(node.dataset, dataset);
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-    children.forEach(child => node.appendChild(child));
-    return node;
+  function setState(patch) {
+    Object.assign(store, patch);
+    store.dispatchEvent(new CustomEvent('change', {
+      detail: { changed: Object.keys(patch) }
+    }));
   }
 
-  function init() {
-    authView = document.getElementById('authView');
+  const views = {
+    splash: { id: 'viewSplash', kind: 'screen' },
+    login: { id: 'viewLogin', kind: 'screen' },
+    register: { id: 'viewRegister', kind: 'screen' },
+    verify: { id: 'viewVerify', kind: 'screen' },
+    photos: {
+      id: 'viewPhotos', kind: 'screen',
+      back: (p) => '#/place/' + p.placeId
+    },
+    map: { id: null, kind: 'map' },
+    place: { id: 'viewPlace', kind: 'sheet', scrim: true },
+    addPrompt: { id: 'viewAddPrompt', kind: 'sheet', scrim: false },
+    addPlace: { id: 'viewAddPlace', kind: 'sheet', scrim: true },
+    editPlace: {
+      id: 'viewEditPlace', kind: 'sheet', scrim: true,
+      back: (p) => '#/place/' + p.placeId
+    },
+    profile: { id: 'viewProfile', kind: 'sheet', scrim: true },
+    tags: { id: 'viewTags', kind: 'sheet', scrim: true },
+    editTag: {
+      id: 'viewEditTag', kind: 'sheet', scrim: true,
+      back: () => '#/tags'
+    },
+    account: { id: 'viewAccountMenu', kind: 'panel' }
+  };
 
-    loginForm = document.getElementById('loginForm');
-    loginEmail = document.getElementById('loginEmail');
-    loginPassword = document.getElementById('loginPassword');
-    loginError = document.getElementById('loginError');
-    loginSection = document.getElementById('loginSection');
-    showLoginLink = document.getElementById('showLoginLink');
+  const routes = [
+    { pattern: /^#\/?$/, view: 'splash', keys: [] },
+    { pattern: /^#\/login$/, view: 'login', keys: [] },
+    { pattern: /^#\/register$/, view: 'register', keys: [] },
+    { pattern: /^#\/verify$/, view: 'verify', keys: [] },
+    { pattern: /^#\/map$/, view: 'map', keys: [] },
+    { pattern: /^#\/add$/, view: 'addPrompt', keys: [] },
+    { pattern: /^#\/add\/form$/, view: 'addPlace', keys: [] },
+    { pattern: /^#\/place\/([^/]+)\/edit$/, view: 'editPlace', keys: ['placeId'] },
+    { pattern: /^#\/place\/([^/]+)\/photos$/, view: 'photos', keys: ['placeId'] },
+    { pattern: /^#\/place\/([^/]+)$/, view: 'place', keys: ['placeId'] },
+    { pattern: /^#\/tags\/([^/]+)$/, view: 'editTag', keys: ['tagId'] },
+    { pattern: /^#\/tags$/, view: 'tags', keys: [] },
+    { pattern: /^#\/profile$/, view: 'profile', keys: [] },
+    { pattern: /^#\/account$/, view: 'account', keys: [] }
+  ];
 
-    registerSection = document.getElementById('registerSection');
-    showRegisterLink = document.getElementById('showRegisterLink');
-    registerForm = document.getElementById('registerForm');
-    registerEmail = document.getElementById('registerEmail');
-    registerPassword = document.getElementById('registerPassword');
-    registerPasswordConfirm = document.getElementById('registerPasswordConfirm');
-    passwordRequirements = document.getElementById('passwordRequirements');
-    registerError = document.getElementById('registerError');
-    registerSuccess = document.getElementById('registerSuccess');
-
-    verifySection = document.getElementById('verifySection');
-    verifyMessage = document.getElementById('verifyMessage');
-    resendForm = document.getElementById('resendForm');
-    resendEmail = document.getElementById('resendEmail');
-    resendError = document.getElementById('resendError');
-    resendSuccess = document.getElementById('resendSuccess');
-    verifyToLoginLink = document.getElementById('verifyToLoginLink');
-
-    mapContainer = document.getElementById('mapContainer');
-    mapCustomControls = document.getElementById('mapCustomControls');
-    addPlaceBtn = document.getElementById('addPlaceBtn');
-
-    createPlaceDialog = document.getElementById('createPlaceDialog');
-    createPlaceForm = document.getElementById('createPlaceForm');
-    placeName = document.getElementById('placeName');
-    placeDescription = document.getElementById('placeDescription');
-    createPlaceError = document.getElementById('createPlaceError');
-    cancelCreatePlaceBtn = document.getElementById('cancelCreatePlaceBtn');
-
-    editPlaceDialog = document.getElementById('editPlaceDialog');
-    editPlaceForm = document.getElementById('editPlaceForm');
-    editPlaceName = document.getElementById('editPlaceName');
-    editPlaceDescription = document.getElementById('editPlaceDescription');
-    editPlaceTagsList = document.getElementById('editPlaceTagsList');
-    editPlaceAllTagsList = document.getElementById('editPlaceAllTagsList');
-    editPlaceError = document.getElementById('editPlaceError');
-    cancelEditPlaceBtn = document.getElementById('cancelEditPlaceBtn');
-    deleteEditPlaceBtn = document.getElementById('deleteEditPlaceBtn');
-    movePlaceBtn = document.getElementById('movePlaceBtn');
-
-    manageTagsBtn = document.getElementById('manageTagsBtn');
-    manageTagsDialog = document.getElementById('manageTagsDialog');
-    tagForm = document.getElementById('tagForm');
-    tagFormName = document.getElementById('tagFormName');
-    tagFormColor = document.getElementById('tagFormColor');
-    tagFormEmoji = document.getElementById('tagFormEmoji');
-    tagFormError = document.getElementById('tagFormError');
-    tagFormCancelBtn = document.getElementById('tagFormCancelBtn');
-    tagFormSubmit = document.getElementById('tagFormSubmit');
-    tagManagerList = document.getElementById('tagManagerList');
-    closeManageTagsBtn = document.getElementById('closeManageTagsBtn');
-
-    filterBtn = document.getElementById('filterBtn');
-    filterDialog = document.getElementById('filterDialog');
-    filterTagsList = document.getElementById('filterTagsList');
-    filterClearBtn = document.getElementById('filterClearBtn');
-    filterCancelBtn = document.getElementById('filterCancelBtn');
-    filterApplyBtn = document.getElementById('filterApplyBtn');
-
-    logoutBtn = document.getElementById('logoutBtn');
-
-    loginForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      loginError.textContent = '';
-
-      const payload = {
-        email: loginEmail.value,
-        password: loginPassword.value,
-      };
-
-      try {
-        state.token = await login(payload);
-        appConfig = await fetchConfig();
-
-        authView.hidden = true;
-        mapContainer.hidden = false;
-        mapCustomControls.hidden = false;
-
-        if (state.map === null) {
-          state.map = new maplibregl.Map({
-            style: 'https://tiles.openfreemap.org/styles/bright',
-            center: [-74.0135, 40.7054],
-            zoom: 12,
-            container: 'mapContainer',
-          });
-
-          state.map.on('click', (e) => {
-            if (state.addPlaceMode === true) {
-              state.pendingLngLat = e.lngLat;
-              createPlaceDialog.showModal();
-              disarmAddPlaceMode();
-            }
-          });
-        }
-
-        const places = await fetchPlaces();
-        for (const place of places) {
-          addPlaceMarker(place);
-        }
-      } catch (err) {
-        loginError.textContent = err.message;
-        console.error(err);
+  function parse(hash) {
+    for (const route of routes) {
+      const match = hash.match(route.pattern);
+      if (match) {
+        const params = Object.fromEntries(
+          route.keys.map((key, index) => [key, match[index + 1]])
+        );
+        return { view: route.view, params };
       }
-    });
-
-    registerPassword.addEventListener('input', renderPasswordRequirements);
-
-    registerForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      registerError.textContent = '';
-      registerSuccess.hidden = true;
-
-      if (registerPassword.value !== registerPasswordConfirm.value) {
-        registerError.textContent = 'Passwords do not match.';
-        return;
-      }
-
-      try {
-        const data = await register({
-          email: registerEmail.value,
-          password: registerPassword.value,
-        });
-
-        registerForm.hidden = true;
-        registerSuccess.textContent = autoVerifyNewAccounts
-          ? 'Account created. You can log in now.'
-          : (data.message ?? 'Check your email to verify your account.');
-        registerSuccess.hidden = false;
-      } catch (err) {
-        if (err.status === 422 && err.data?.errors) {
-          const e = err.data.errors;
-          registerError.textContent = [e.email, e.password].filter(Boolean).join(' ');
-        } else {
-          registerError.textContent = err.message;
-        }
-      }
-    });
-
-    showRegisterLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('register');
-    });
-
-    showLoginLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('login');
-    });
-
-    resendForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      resendError.textContent = '';
-      resendSuccess.hidden = true;
-
-      try {
-        const data = await apiFetch(`${API_BASE}/resend-verification`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: resendEmail.value }),
-        });
-        resendSuccess.textContent = data.message ?? 'If that account exists and is unverified, a new verification email has been sent.';
-        resendSuccess.hidden = false;
-      } catch (err) {
-        if (err.status === 422 && err.data?.errors) {
-          resendError.textContent = err.data.errors.email ?? 'A valid email is required.';
-        } else {
-          resendError.textContent = err.message;
-        }
-      }
-    });
-
-    verifyToLoginLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('login');
-    });
-
-    createPlaceDialog.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      createPlaceError.textContent = '';
-
-      const payload = {
-        name: placeName.value,
-        description: placeDescription.value,
-        latitude: state.pendingLngLat.lat,
-        longitude: state.pendingLngLat.lng,
-      };
-
-      try {
-        const newPlace = await authedPostJSON(`${API_BASE}/places`, payload);
-        addPlaceMarker(newPlace);
-        createPlaceDialog.close();
-        createPlaceForm.reset();
-      } catch (err) {
-        createPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    cancelCreatePlaceBtn.addEventListener('click', () => {
-      createPlaceDialog.close();
-      disarmAddPlaceMode();
-    });
-
-    addPlaceBtn.addEventListener('click', () => {
-      if (state.addPlaceMode) {
-        disarmAddPlaceMode();
-      } else {
-        armAddPlaceMode();
-      }
-    });
-
-    editPlaceForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      editPlaceError.textContent = '';
-
-      const placeId = editPlaceDialog.dataset.placeId;
-      const payload = {
-        name: editPlaceName.value,
-        description: editPlaceDescription.value,
-      };
-
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        await refreshPlaceMarker(placeId);
-        editPlaceDialog.close();
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    cancelEditPlaceBtn.addEventListener('click', () => {
-      editPlaceDialog.close();
-    });
-
-    deleteEditPlaceBtn.addEventListener('click', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      if (!confirm('Delete this place? This cannot be undone.')) return;
-
-      editPlaceError.textContent = '';
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}`, {
-          method: 'DELETE',
-        });
-
-        state.markers[placeId]?.remove();
-        delete state.markers[placeId];
-        if (openPopup && openPopup.placeId === placeId) {
-          openPopup = null;
-        }
-        updateFilterIndicator();
-
-        editPlaceDialog.close();
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    movePlaceBtn.addEventListener('click', () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      const marker = state.markers[placeId];
-      if (!marker) return;
-
-      editPlaceDialog.close();
-      marker.setDraggable(true);
-      marker.getElement().style.cursor = 'move';
-    });
-
-    manageTagsBtn.addEventListener('click', () => {
-      openManageTags();
-    });
-
-    closeManageTagsBtn.addEventListener('click', () => {
-      manageTagsDialog.close();
-    });
-
-    manageTagsDialog.addEventListener('close', async () => {
-      if (!manageTagsDirty) return;
-      manageTagsDirty = false;
-      try {
-        await resyncMarkers();
-      } catch (err) {
-        console.error(err);
-      }
-    });
-
-    tagFormCancelBtn.addEventListener('click', () => {
-      resetTagForm();
-    });
-
-    tagForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      tagFormError.textContent = '';
-
-      const editingId = tagForm.dataset.editingId;
-      const payload = {
-        name: tagFormName.value,
-        color: tagFormColor.value,
-        emoji: tagFormEmoji.value,
-      };
-
-      try {
-        if (editingId) {
-          await authedFetch(`${API_BASE}/tags/${editingId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          manageTagsDirty = true;
-        } else {
-          await authedPostJSON(`${API_BASE}/tags`, payload);
-        }
-        manageTags = await fetchTagsWithCounts();
-        renderTagManager();
-        resetTagForm();
-      } catch (err) {
-        tagFormError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    filterBtn.addEventListener('click', () => {
-      openFilterDialog();
-    });
-
-    filterApplyBtn.addEventListener('click', () => {
-      applyFilter();
-    });
-
-    filterClearBtn.addEventListener('click', () => {
-      clearFilter();
-    });
-
-    filterCancelBtn.addEventListener('click', () => {
-      filterDialog.close();
-    });
-
-    logoutBtn.addEventListener('click', () => {
-      logout();
-    });
-
-    loadPublicConfig();
-
-    maybeHandleVerification();
-  }
-
-  function armAddPlaceMode() {
-    state.addPlaceMode = true;
-    state.map.getCanvas().style.cursor = 'crosshair';
-    addPlaceBtn.textContent = 'Cancel';
-  }
-
-  function disarmAddPlaceMode() {
-    state.addPlaceMode = false;
-    state.map.getCanvas().style.cursor = '';
-    addPlaceBtn.textContent = 'Add place';
-  }
-
-  async function authedPostJSON(url, obj) {
-    return authedFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(obj),
-    });
-  }
-
-  async function apiFetch(url, options = {}) {
-    const response = await fetch(url, options);
-    if (response.status === 204) return null;
-    const data = await response.json();
-    if (!response.ok) {
-      const err = new Error(data.error ?? `HTTP ${response.status}`);
-      err.status = response.status;
-      err.data = data;
-      throw err;
     }
-    return data;
+    return null;
   }
 
-  async function authedFetch(url, options = {}) {
-    const headers = {};
-    if (options.headers) Object.assign(headers, options.headers);
-    headers['Authorization'] = 'Bearer ' + state.token;
-    try {
-      return await apiFetch(url, { ...options, headers });
-    } catch (err) {
-      if (err.status === 401) {
-        logout('Your session has expired. Please log in again.');
+  const app = document.getElementById('app');
+  const scrim = document.getElementById('scrim');
+  const avatarButton = document.getElementById('avatarButton');
+  let firstRender = true;
+
+  function hideAll() {
+    for (const view of Object.values(views)) {
+      if (view.id) {
+        const node = document.getElementById(view.id);
+        if (node) {
+          node.hidden = true;
+        }
       }
-      throw err;
     }
   }
 
-  function logout(message) {
-    state.token = null;
-
-    for (const id of Object.keys(state.markers)) {
-      state.markers[id].remove();
-    }
-    state.markers = {};
-    openPopup = null;
-    state.filter = { tagIds: [], mode: 'any' };
-    updateFilterIndicator();
-
-    mapContainer.hidden = true;
-    mapCustomControls.hidden = true;
-    authView.hidden = false;
-
-    loginForm.reset();
-    loginError.textContent = message ?? '';
-  }
-
-  function showAuthSection(which) {
-    loginSection.hidden = which !== 'login';
-    registerSection.hidden = which !== 'register';
-    verifySection.hidden = which !== 'verify';
-    loginError.textContent = '';
-    registerError.textContent = '';
-    registerSuccess.hidden = true;
-    registerForm.hidden = false;
-  }
-
-  async function login(payload) {
-    const data = await apiFetch(`${API_BASE}/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    return data.token;
-  }
-
-  async function loadPublicConfig() {
-    try {
-      const config = await apiFetch(`${API_BASE}/config`);
-      passwordPolicy = config.password ?? null;
-      autoVerifyNewAccounts = config.auto_verify_new_accounts ?? false;
-      renderPasswordRequirements();
-    } catch {
-      passwordPolicy = null;
-    }
-  }
-
-  function renderPasswordRequirements() {
-    if (passwordPolicy === null) {
-      passwordRequirements.hidden = true;
-
+  function focusView(node) {
+    if (firstRender || !node) {
       return;
     }
-
-    const pw = registerPassword.value;
-    const rules = [
-      { label: `At least ${passwordPolicy.min_length} characters`, met: pw.length >= passwordPolicy.min_length, on: true },
-      { label: 'An uppercase letter', met: /\p{Lu}/u.test(pw), on: passwordPolicy.require_uppercase },
-      { label: 'A lowercase letter', met: /\p{Ll}/u.test(pw), on: passwordPolicy.require_lowercase },
-      { label: 'A number', met: /\p{N}/u.test(pw), on: passwordPolicy.require_number },
-      { label: 'A symbol', met: /[^\p{L}\p{N}]/u.test(pw), on: passwordPolicy.require_symbol },
-    ].filter((r) => r.on);
-
-    passwordRequirements.textContent = '';
-    for (const rule of rules) {
-      const li = el('li', { text: rule.label });
-      if (rule.met) li.classList.add('met');
-      passwordRequirements.appendChild(li);
+    const target = node.querySelector('[tabindex="-1"]') || node;
+    if (!target.hasAttribute('tabindex')) {
+      target.setAttribute('tabindex', '-1');
     }
-    passwordRequirements.hidden = false;
+    target.focus();
   }
 
-  async function register(payload) {
-    return apiFetch(`${API_BASE}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  }
+  function render() {
+    const route = store.route;
+    const view = views[route.view];
+    const node = view.id ? document.getElementById(view.id) : null;
 
-  async function maybeHandleVerification() {
-    const token = new URLSearchParams(location.search).get('verify');
-    if (!token) return;
+    hideAll();
 
-    history.replaceState(null, '', location.pathname);
+    app.classList.toggle('is-sheet-open', view.kind === 'sheet' && view.scrim === true);
+    scrim.hidden = !(view.kind === 'sheet' && view.scrim === true);
+    avatarButton.setAttribute('aria-expanded', view.kind === 'panel' ? 'true' : 'false');
 
-    showAuthSection('verify');
-    verifyMessage.textContent = 'Verifying…';
-    resendForm.hidden = true;
-
-    try {
-      const data = await apiFetch(`${API_BASE}/verify-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      });
-      verifyMessage.textContent = data.message ?? 'Email verified. You can now log in.';
-    } catch (err) {
-      if (err.status === 410) {
-        verifyMessage.textContent = 'This verification link has expired. Request a new one below.';
-        resendForm.hidden = false;
-      } else if (err.status === 400) {
-        verifyMessage.textContent = 'This verification link is invalid. Request a new one below.';
-        resendForm.hidden = false;
-      } else {
-        verifyMessage.textContent = err.message;
+    if (node) {
+      node.hidden = false;
+      const back = node.querySelector('[data-back]');
+      if (back && view.back) {
+        back.setAttribute('href', view.back(route.params));
       }
     }
+
+    focusView(node);
+    firstRender = false;
   }
 
-  async function fetchPlaces() {
-    const { tagIds, mode } = state.filter;
-    if (tagIds.length === 0) {
-      return authedFetch(`${API_BASE}/places`);
-    }
-    const query = new URLSearchParams({ tags: tagIds.join(','), match: mode });
-    return authedFetch(`${API_BASE}/places?${query.toString()}`);
-  }
-
-  async function fetchPlace(placeId) {
-    return authedFetch(`${API_BASE}/places/${placeId}`);
-  }
-
-  async function fetchPlaceTags(placeId) {
-    return authedFetch(`${API_BASE}/places/${placeId}/tags`);
-  }
-
-  async function fetchTags() {
-    return authedFetch(`${API_BASE}/tags`);
-  }
-
-  async function fetchTagsWithCounts() {
-    return authedFetch(`${API_BASE}/tags/counts`);
-  }
-
-  async function fetchConfig() {
-    return authedFetch(`${API_BASE}/config/me`);
-  }
-
-  function firstGrapheme(str) {
-    if (str === null) return null;
-    const seg = graphemeSegmenter.segment(str.trim());
-    return seg[Symbol.iterator]().next().value?.segment ?? null;
-  }
-
-  async function openEditDialog(place) {
-    editPlaceError.textContent = '';
-    editPlaceName.value = place.name;
-    editPlaceDescription.value = place.description ?? '';
-    editPlaceDialog.dataset.placeId = place.id;
-    editPlaceDialog.dataset.primaryTagId = place.primary_tag_id ?? '';
-
-    editPlaceTagsList.textContent = 'Loading tags…';
-    editPlaceDialog.showModal();
-
-    try {
-      const [tags, allTags] = await Promise.all([
-        fetchPlaceTags(place.id),
-        fetchTags(),
-      ]);
-      if (!editPlaceDialog.open) return;
-      editPlaceTags = tags;
-      editPlaceAllTags = allTags;
-      renderTags(editPlaceDialog.dataset.primaryTagId || null);
-    } catch (err) {
-      if (!editPlaceDialog.open) return;
-      editPlaceTagsList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
-  }
-
-  function renderTagChip(tag) {
-    const chip = el('div', {
-      classes: ['place-popup__tag'],
-      title: tag.name,
-      children: [el('span', { classes: ['place-popup__tag-name'], text: tag.name })],
-    });
-    chip.style.backgroundColor = tag.color;
-
-    const emoji = firstGrapheme(tag.emoji);
-    if (emoji !== null) {
-      chip.insertBefore(
-        el('span', { classes: ['place-popup__tag-emoji'], text: emoji }),
-        chip.firstChild,
-      );
-    }
-
-    return chip;
-  }
-
-  function renderEditableTagChip(tag, controls) {
-    const chip = renderTagChip(tag);
-    for (const control of controls) {
-      chip.appendChild(control);
-    }
-    return chip;
-  }
-
-  function tagControlButton(glyph, label, onClick) {
-    const btn = el('button', {
-      classes: ['tag-chip__control'],
-      text: glyph,
-      title: label,
-      attrs: { type: 'button', 'aria-label': label },
-    });
-    btn.addEventListener('click', onClick);
-    return btn;
-  }
-
-  function renderAssignedTagChip(tag, primaryTagId) {
-    const isPrimary = tag.id === primaryTagId;
-
-    const togglePrimary = tagControlButton(
-      isPrimary ? '★' : '☆',
-      isPrimary ? 'Unset primary' : 'Set as primary',
-      async () => {
-        const placeId = editPlaceDialog.dataset.placeId;
-        const currentPrimary = editPlaceDialog.dataset.primaryTagId || null;
-        const makePrimary = tag.id !== currentPrimary;
-
-        try {
-          if (makePrimary) {
-            await authedFetch(`${API_BASE}/places/${placeId}/primary-tag/${tag.id}`, {
-              method: 'PUT',
-            });
-            editPlaceDialog.dataset.primaryTagId = tag.id;
-          } else {
-            await authedFetch(`${API_BASE}/places/${placeId}/primary-tag`, {
-              method: 'DELETE',
-            });
-            editPlaceDialog.dataset.primaryTagId = '';
-          }
-          renderTags(editPlaceDialog.dataset.primaryTagId || null);
-          await refreshPlaceMarker(placeId);
-        } catch (err) {
-          editPlaceError.textContent = err.message;
-          console.error(err);
-        }
-      },
-    );
-
-    const unassignTag = tagControlButton('⊖', 'Unassign tag', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}/tags/${tag.id}`, {
-          method: 'DELETE',
-        });
-        editPlaceTags = editPlaceTags.filter((t) => t.id !== tag.id);
-        const wasPrimary = editPlaceDialog.dataset.primaryTagId === tag.id;
-        if (wasPrimary) {
-          editPlaceDialog.dataset.primaryTagId = '';
-        }
-        renderTags(editPlaceDialog.dataset.primaryTagId || null);
-        if (openPopup && openPopup.placeId === placeId) {
-          renderPopupTags(placeId, openPopup.tagsSlot, openPopup.popup);
-        }
-        await refreshPlaceMarker(placeId);
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    return renderEditableTagChip(tag, [togglePrimary, unassignTag]);
-  }
-
-  function renderUnassignedTagChip(tag) {
-    const assignTag = tagControlButton('⊕', 'Assign tag', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}/tags/${tag.id}`, {
-          method: 'PUT',
-        });
-        editPlaceTags = [...editPlaceTags, tag];
-        renderTags(editPlaceDialog.dataset.primaryTagId || null);
-        if (openPopup && openPopup.placeId === placeId) {
-          renderPopupTags(placeId, openPopup.tagsSlot, openPopup.popup);
-        }
-        await refreshPlaceMarker(placeId);
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-    return renderEditableTagChip(tag, [assignTag]);
-  }
-
-  function renderTags(primaryTagId) {
-    const assignedIds = new Set(editPlaceTags.map((t) => t.id));
-
-    editPlaceTagsList.textContent = '';
-    for (const tag of editPlaceTags) {
-      editPlaceTagsList.appendChild(renderAssignedTagChip(tag, primaryTagId));
-    }
-
-    editPlaceAllTagsList.textContent = '';
-    for (const tag of editPlaceAllTags) {
-      if (assignedIds.has(tag.id)) continue;
-      editPlaceAllTagsList.appendChild(renderUnassignedTagChip(tag));
-    }
-  }
-
-  function resetTagForm() {
-    tagForm.reset();
-    delete tagForm.dataset.editingId;
-    tagFormColor.value = appConfig.tag.default_color;
-    tagFormError.textContent = '';
-    tagFormSubmit.value = 'Add tag';
-    tagFormCancelBtn.hidden = true;
-  }
-
-  async function openManageTags() {
-    resetTagForm();
-    manageTagsDirty = false;
-    tagManagerList.textContent = 'Loading tags…';
-    manageTagsDialog.showModal();
-
-    try {
-      manageTags = await fetchTagsWithCounts();
-      if (!manageTagsDialog.open) return;
-      renderTagManager();
-    } catch (err) {
-      if (!manageTagsDialog.open) return;
-      tagManagerList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
-  }
-
-  function renderTagManager() {
-    tagManagerList.textContent = '';
-
-    if (manageTags.length === 0) {
-      tagManagerList.appendChild(el('p', { classes: ['tag-manager__empty'], text: 'No tags yet.' }));
+  function onHashChange() {
+    const route = parse(window.location.hash || '#/');
+    if (!route) {
+      window.location.replace('#/map');
       return;
     }
-
-    for (const tag of manageTags) {
-      tagManagerList.appendChild(renderTagManagerRow(tag));
-    }
+    setState({ route: route });
   }
 
-  function renderTagManagerRow(tag) {
-    const chip = renderTagChip(tag);
-
-    const count = el('span', {
-      classes: ['tag-manager__count'],
-      text: `${tag.assignment_count}`,
-      title: `Assigned to ${tag.assignment_count} place${tag.assignment_count === 1 ? '' : 's'}`,
-    });
-
-    const editBtn = tagControlButton('✎', 'Edit tag', () => startEditTag(tag));
-    const deleteBtn = tagControlButton('✕', 'Delete tag', () => deleteTag(tag));
-    deleteBtn.classList.add('tag-manager__delete');
-
-    const row = el('div', {
-      classes: ['tag-manager__row'],
-      children: [chip, count, editBtn, deleteBtn],
-    });
-    if (tag.assignment_count === 0) row.classList.add('tag-manager__row--unused');
-
-    return row;
+  function go(hash) {
+    window.location.hash = hash;
   }
 
-  function startEditTag(tag) {
-    tagForm.dataset.editingId = tag.id;
-    tagFormName.value = tag.name;
-    tagFormColor.value = tag.color;
-    tagFormEmoji.value = tag.emoji ?? '';
-    tagFormError.textContent = '';
-    tagFormSubmit.value = 'Save';
-    tagFormCancelBtn.hidden = false;
-    tagFormName.focus();
+  function openDialog(dialog) {
+    dialog.returnValue = '';
+    dialog.showModal();
   }
 
-  async function deleteTag(tag) {
-    const msg = tag.assignment_count > 0
-      ? `Delete "${tag.name}"? It is assigned to ${tag.assignment_count} place${tag.assignment_count === 1 ? '' : 's'}; those tag assignments will be removed. The place${tag.assignment_count === 1 ? '' : 's'} stay${tag.assignment_count === 1 ? 's' : ''} untouched. This cannot be undone.`
-      : `Delete "${tag.name}"? This cannot be undone.`;
-    if (!confirm(msg)) return;
+  const guards = {};
+  const leaveDialog = document.getElementById('leaveDialog');
+  let pendingHash = null;
 
-    tagFormError.textContent = '';
-    try {
-      await authedFetch(`${API_BASE}/tags/${tag.id}`, { method: 'DELETE' });
-      manageTagsDirty = true;
-      if (tagForm.dataset.editingId === tag.id) resetTagForm();
-      manageTags = await fetchTagsWithCounts();
-      renderTagManager();
-    } catch (err) {
-      tagFormError.textContent = err.message;
-      console.error(err);
-    }
+  function registerGuard(viewName, isDirty) {
+    guards[viewName] = isDirty;
   }
 
-  async function openFilterDialog() {
-    filterStagedIds = new Set(state.filter.tagIds);
-    setFilterModeRadio(state.filter.mode);
-
-    filterTagsList.textContent = 'Loading tags…';
-    filterDialog.showModal();
-
-    try {
-      filterTags = await fetchTags();
-      if (!filterDialog.open) return;
-      renderFilterTags();
-    } catch (err) {
-      if (!filterDialog.open) return;
-      filterTagsList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
+  function currentlyDirty() {
+    const name = store.route && store.route.view;
+    return Boolean(name && guards[name] && guards[name]());
   }
 
-  function setFilterModeRadio(mode) {
-    const input = filterDialog.querySelector(`input[name="filterMode"][value="${mode}"]`);
-    if (input) input.checked = true;
-  }
-
-  function renderFilterTags() {
-    filterTagsList.textContent = '';
-
-    if (filterTags.length === 0) {
-      filterTagsList.appendChild(el('p', { classes: ['tag-manager__empty'], text: 'No tags yet.' }));
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('a[href^="#/"]');
+    if (!link || !currentlyDirty()) {
       return;
     }
+    event.preventDefault();
+    pendingHash = link.getAttribute('href');
+    openDialog(leaveDialog);
+  });
 
-    for (const tag of filterTags) {
-      filterTagsList.appendChild(renderFilterTagChip(tag));
+  leaveDialog.addEventListener('close', () => {
+    const target = pendingHash;
+    pendingHash = null;
+    if (leaveDialog.returnValue === 'confirm' && target) {
+      go(target);
+    }
+  });
+
+  const confirmDialog = document.getElementById('confirmDialog');
+  let onConfirm = null;
+
+  function confirmAction(options) {
+    document.getElementById('confirmTitle').textContent = options.title;
+    document.getElementById('confirmText').textContent = options.text || '';
+    document.getElementById('confirmAcceptLabel').textContent = options.accept || 'Delete';
+
+    const subject = document.getElementById('confirmSubject');
+    subject.hidden = !options.subject;
+    if (options.subject) {
+      document.getElementById('confirmSubjectName').textContent = options.subject;
+    }
+
+    onConfirm = options.onConfirm || null;
+    openDialog(confirmDialog);
+  }
+
+  confirmDialog.addEventListener('close', () => {
+    const callback = onConfirm;
+    onConfirm = null;
+    if (confirmDialog.returnValue === 'confirm' && callback) {
+      callback();
+    }
+  });
+
+  const toast = document.getElementById('toast');
+  const toastText = document.getElementById('toastText');
+  const toastClose = document.getElementById('toastClose');
+  let toastTimer = null;
+
+  function showToast(message, kind) {
+    const isError = kind === 'error';
+    toastText.textContent = message;
+    toast.setAttribute('role', isError ? 'alert' : 'status');
+    toastClose.hidden = !isError;
+    toast.hidden = false;
+
+    window.clearTimeout(toastTimer);
+    if (!isError) {
+      toastTimer = window.setTimeout(() => {
+        toast.hidden = true;
+      }, 4000);
     }
   }
 
-  function renderFilterTagChip(tag) {
-    const selected = filterStagedIds.has(tag.id);
-    const children = [el('span', { classes: ['place-popup__tag-name'], text: tag.name })];
+  toastClose.addEventListener('click', () => {
+    toast.hidden = true;
+  });
 
-    const emoji = firstGrapheme(tag.emoji);
-    if (emoji !== null) {
-      children.unshift(el('span', { classes: ['place-popup__tag-emoji'], text: emoji }));
+  avatarButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    go(store.route && store.route.view === 'account' ? '#/map' : '#/account');
+  });
+
+  document.addEventListener('click', (event) => {
+    if (store.route && store.route.view === 'account' &&
+      !event.target.closest('#viewAccountMenu') &&
+      !event.target.closest('#avatarButton')) {
+      go('#/map');
     }
+  });
 
-    const chip = el('button', {
-      classes: ['filter-tag'],
-      title: tag.name,
-      attrs: { type: 'button', 'aria-pressed': selected ? 'true' : 'false' },
-      children,
-    });
-    chip.style.backgroundColor = tag.color;
-
-    chip.addEventListener('click', () => {
-      if (filterStagedIds.has(tag.id)) {
-        filterStagedIds.delete(tag.id);
-        chip.setAttribute('aria-pressed', 'false');
-      } else {
-        filterStagedIds.add(tag.id);
-        chip.setAttribute('aria-pressed', 'true');
-      }
-    });
-
-    return chip;
-  }
-
-  function readFilterMode() {
-    const checked = filterDialog.querySelector('input[name="filterMode"]:checked');
-    return checked instanceof HTMLInputElement ? checked.value : 'any';
-  }
-
-  async function applyFilter() {
-    state.filter = {
-      tagIds: [...filterStagedIds],
-      mode: readFilterMode(),
-    };
-    filterDialog.close();
-    try {
-      await resyncMarkers();
-      updateFilterIndicator();
-    } catch (err) {
-      console.error(err);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && store.route && store.route.view === 'account') {
+      go('#/map');
+      avatarButton.focus();
     }
-  }
+  });
 
-  async function clearFilter() {
-    state.filter = { tagIds: [], mode: readFilterMode() };
-    updateFilterIndicator();
-    filterDialog.close();
-    try {
-      await resyncMarkers();
-    } catch (err) {
-      console.error(err);
+  store.addEventListener('change', (event) => {
+    if (event.detail.changed.indexOf('route') !== -1) {
+      render();
     }
-  }
+  });
+  window.addEventListener('hashchange', onHashChange);
+  onHashChange();
 
-  function updateFilterIndicator() {
-    const active = state.filter.tagIds.length > 0;
-    filterBtn.textContent = active
-      ? `Filter (${Object.keys(state.markers).length})`
-      : 'Filter';
-    filterBtn.classList.toggle('filter-btn--active', active);
-  }
+  window.wanderer = {
+    store,
+    setState,
+    go,
+    registerGuard: registerGuard,
+    confirmAction: confirmAction,
+    showToast: showToast
+  };
 
-  function buildPlacePopup(place) {
-    const rawDescription = place.description ?? null;
-    const tagsSlot = el('div', { classes: ['place-popup__tags'] });
-    const editBtn = el('button', { classes: ['popup-edit-btn'], text: '✎ Edit' });
-    editBtn.addEventListener('click', () => openEditDialog(place));
-
-    const children = [el('div', { text: place.name })];
-    if (rawDescription !== null) {
-      children.push(el('div', { text: rawDescription }));
-    }
-    children.push(tagsSlot);
-    children.push(editBtn);
-
-    const popupEl = el('div', { children });
-
-    const popup = new maplibregl.Popup(
-      {
-        offset: {
-          'bottom': [0, -48],
-          'bottom-left': [0, -48],
-          'bottom-right': [0, -48],
-          'top': [0, 6],
-          'top-left': [0, 6],
-          'top-right': [0, 6],
-          'left': [20, -27],
-          'right': [-20, -27],
-        },
-      }).setDOMContent(popupEl);
-
-    return { popup, tagsSlot };
-  }
-
-  function renderPopupTags(placeId, tagsSlot, popup) {
-    tagsSlot.textContent = 'Loading tags…';
-    fetchPlaceTags(placeId)
-      .then((tags) => {
-        if (!popup.isOpen()) return;
-        tagsSlot.textContent = '';
-        for (const tag of tags) {
-          tagsSlot.appendChild(renderTagChip(tag));
-        }
-      })
-      .catch((err) => {
-        if (!popup.isOpen()) return;
-        tagsSlot.textContent = '';
-        tagsSlot.appendChild(el('div', { text: 'Could not load tags.' }));
-        console.error(err);
-      });
-  }
-
-  function addPlaceMarker(place) {
-    const SVG_NS = 'http://www.w3.org/2000/svg';
-
-    const color = place.primary_color ?? '#525f7a';
-
-    const emoji = firstGrapheme(place.primary_emoji ?? null);
-
-    const markerEl = el('div', { classes: ['place-marker'] });
-
-    const markerSvg = document.createElementNS(SVG_NS, 'svg');
-    markerSvg.setAttribute('class', 'place-marker__pin');
-    markerSvg.setAttribute('viewBox', '0 0 30 42');
-    markerSvg.setAttribute('width', '30');
-    markerSvg.setAttribute('height', '42');
-
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute(
-      'd',
-      'M15 0 C6.716 0 0 6.716 0 15 C0 23.5 15 42 15 42 ' +
-      'C15 42 30 23.5 30 15 C30 6.716 23.284 0 15 0 Z'
-    );
-    path.setAttribute('fill', color);
-    markerSvg.appendChild(path);
-
-    markerEl.appendChild(markerSvg);
-
-    if (emoji !== null) {
-      markerEl.appendChild(el('div', {
-        classes: ['place-marker__inner'],
-        text: emoji,
-      }));
-    }
-
-    const { popup, tagsSlot } = buildPlacePopup(place);
-
-    popup.on('open', () => {
-      openPopup = { placeId: place.id, tagsSlot, popup };
-      renderPopupTags(place.id, tagsSlot, popup);
-    });
-    popup.on('close', () => {
-      if (openPopup && openPopup.popup === popup) openPopup = null;
-    });
-
-    const marker = new maplibregl.Marker({ element: markerEl, anchor: 'bottom' })
-      .setLngLat([place.longitude, place.latitude])
-      .setPopup(popup)
-      .addTo(state.map);
-
-    // Non-draggable by default, The edit dialog's "Move place" button arms it.
-    marker.on('dragend', () => persistMarkerLocation(place.id, marker));
-
-    state.markers[place.id] = marker;
-    return marker;
-  }
-
-  async function persistMarkerLocation(placeId, marker) {
-    const { lng, lat } = marker.getLngLat().wrap();
-    try {
-      await authedFetch(`${API_BASE}/places/${placeId}/location`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ latitude: lat, longitude: lng }),
-      });
-    } catch (err) {
-      alert(err.message);
-      console.error(err);
-    }
-
-    await refreshPlaceMarker(placeId);
-  }
-
-  async function refreshPlaceMarker(placeId) {
-    if (state.filter.tagIds.length > 0) {
-      await resyncMarkers();
-      updateFilterIndicator();
-      return;
-    }
-
-    const freshPlace = await fetchPlace(placeId);
-
-    const old = state.markers[placeId];
-    const wasOpen = old.getPopup().isOpen();
-    old.remove();
-
-    addPlaceMarker(freshPlace);
-
-    if (wasOpen) state.markers[placeId].togglePopup();
-  }
-
-  async function resyncMarkers() {
-    const reopenId = openPopup ? openPopup.placeId : null;
-    const places = await fetchPlaces();
-
-    for (const id of Object.keys(state.markers)) {
-      state.markers[id].remove();
-    }
-    state.markers = {};
-    openPopup = null;
-
-    for (const place of places) {
-      addPlaceMarker(place);
-    }
-
-    if (reopenId !== null && state.markers[reopenId]) {
-      state.markers[reopenId].togglePopup();
-    }
-  }
-
-  init();
 })();

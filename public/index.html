@@ -4,176 +4,480 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MapApp</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.slate.min.css">
-  <link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
-  <script defer src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-  <link href="/css/styles.css" rel="stylesheet" />
-  <script defer src="/js/app.js"></script>
+  <title>Wanderer</title>
+  <link rel="preload" href="fonts/instrument-sans-v4-latin_latin-ext-regular.woff2" as="font" type="font/woff2"
+    crossorigin>
+  <link rel="preload" href="fonts/newsreader-v26-latin_latin-ext-700italic.woff2" as="font" type="font/woff2"
+    crossorigin>
+  <link rel="stylesheet" href="css/fonts.css">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/views.css">
+  <style>
+    /* Map placeholder */
+    #map {
+      background-color: #d7e2d3;
+      background-image:
+        linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+      background-size: 2.5rem 2.5rem;
+    }
+  </style>
 </head>
 
 <body>
+  <div class="app" id="app">
+    <div class="map" id="map"></div>
+    <div class="scrim" id="scrim" data-close></div>
 
-  <div id="mapContainer" hidden></div>
-  <div id="mapCustomControls" hidden>
-    <button id="addPlaceBtn">Add place</button>
-    <button id="manageTagsBtn">Manage tags</button>
-    <button id="filterBtn">Filter</button>
-    <button id="logoutBtn" class="outline secondary">Log out</button>
-  </div>
-
-  <div id="authView">
-    <article>
-      <!-- Login -->
-      <section id="loginSection">
-        <h2>Login</h2>
-        <form id="loginForm" name="loginForm">
-          <label for="loginEmail">Email</label>
-          <input type="email" id="loginEmail" name="loginEmail" autocomplete="email" required>
-          <label for="loginPassword">Password</label>
-          <input type="password" id="loginPassword" name="loginPassword" autocomplete="current-password" required>
-          <p id="loginError" role="alert"></p>
-          <input type="submit" value="Login">
-        </form>
-        <p>No account? <a href="#" id="showRegisterLink">Create one</a></p>
-      </section>
-
-      <!-- Register -->
-      <section id="registerSection" hidden>
-        <h2>Create account</h2>
-        <form id="registerForm" name="registerForm">
-          <label for="registerEmail">Email</label>
-          <input type="email" id="registerEmail" name="registerEmail" autocomplete="email" required>
-          <label for="registerPassword">Password</label>
-          <input type="password" id="registerPassword" name="registerPassword" autocomplete="new-password" required>
-          <label for="registerPasswordConfirm">Confirm password</label>
-          <input type="password" id="registerPasswordConfirm" name="registerPasswordConfirm" autocomplete="new-password"
-            required>
-          <ul id="passwordRequirements" class="pw-reqs" hidden></ul>
-          <p id="registerError" role="alert"></p>
-          <input type="submit" value="Create account">
-        </form>
-        <p id="registerSuccess" role="status" hidden></p>
-        <p>Already have an account? <a href="#" id="showLoginLink">Log in</a></p>
-      </section>
-
-      <!-- Email verification (entered via the ?verify=<token> link) -->
-      <section id="verifySection" hidden>
-        <h2>Email verification</h2>
-        <p id="verifyMessage" role="status"></p>
-        <form id="resendForm" name="resendForm" hidden>
-          <label for="resendEmail">Email</label>
-          <input type="email" id="resendEmail" name="resendEmail" autocomplete="email" required>
-          <p id="resendError" role="alert"></p>
-          <input type="submit" value="Resend verification email">
-        </form>
-        <p id="resendSuccess" role="status" hidden></p>
-        <p><a href="#" id="verifyToLoginLink">Go to login</a></p>
-      </section>
-    </article>
-  </div>
-
-  <dialog id="createPlaceDialog" aria-labelledby="createPlaceTitle">
-    <article>
-      <h3 id="createPlaceTitle">New place</h3>
-      <form id="createPlaceForm" method="dialog">
-        <label for="placeName">Name *</label>
-        <input type="text" id="placeName" name="placeName" required>
-        <label for="placeDescription">Description</label>
-        <textarea id="placeDescription" name="placeDescription"></textarea>
-        <p id="createPlaceError" role="alert"></p>
-        <div class="modal-actions modal-actions--end">
-          <div class="modal-actions__primary">
-            <input type="button" id="cancelCreatePlaceBtn" class="outline secondary" value="Cancel">
-            <input type="submit" value="Save">
+    <!-- Place view -->
+    <aside class="sheet" id="viewPlace" aria-labelledby="placeTitle" hidden>
+      <a class="icon-btn sheet__close" href="#/map" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      </a>
+      <div class="sheet__body sheet__body--flush">
+        <div class="place">
+          <div class="place__main">
+            <h2 class="place__title" id="placeTitle" tabindex="-1"></h2>
+            <ul class="tag-list" id="placeTags"></ul>
+            <p class="place__desc" id="placeDesc"></p>
           </div>
-        </div>
-      </form>
-    </article>
-  </dialog>
-
-  <dialog id="editPlaceDialog" aria-labelledby="editPlaceTitle">
-    <article>
-      <h3 id="editPlaceTitle">Edit place</h3>
-      <form id="editPlaceForm" method="dialog">
-        <label for="editPlaceName">Name *</label>
-        <input type="text" id="editPlaceName" name="editPlaceName" required>
-        <label for="editPlaceDescription">Description</label>
-        <textarea id="editPlaceDescription" name="editPlaceDescription"></textarea>
-        <section id="editPlaceTags" aria-label="Assigned tags">
-          <h4>Assigned tags</h4>
-          <div id="editPlaceTagsList"></div>
-        </section>
-        <section id="editPlaceAllTags" aria-label="All tags">
-          <h4>All tags</h4>
-          <div id="editPlaceAllTagsList"></div>
-        </section>
-        <p id="editPlaceError" role="alert"></p>
-        <div class="modal-actions">
-          <input type="button" id="deleteEditPlaceBtn" class="outline secondary btn-danger" value="Delete place">
-          <div class="modal-actions__primary">
-            <input type="button" id="movePlaceBtn" class="outline secondary" value="Move place">
-            <input type="button" id="cancelEditPlaceBtn" class="outline secondary" value="Cancel">
-            <input type="submit" value="Save">
-          </div>
-        </div>
-      </form>
-    </article>
-  </dialog>
-
-  <dialog id="manageTagsDialog" aria-labelledby="manageTagsTitle">
-    <article>
-      <h3 id="manageTagsTitle">Manage tags</h3>
-      <form id="tagForm">
-        <div class="tag-form__fields">
-          <input type="text" id="tagFormName" name="tagFormName" placeholder="Tag name" aria-label="Tag name" required>
-          <input type="color" id="tagFormColor" name="tagFormColor" aria-label="Tag color">
-          <input type="text" id="tagFormEmoji" name="tagFormEmoji" placeholder="Emoji" aria-label="Tag emoji"
-            class="tag-form__emoji">
-        </div>
-        <p id="tagFormError" role="alert"></p>
-        <div class="modal-actions modal-actions--end">
-          <div class="modal-actions__primary">
-            <input type="button" id="tagFormCancelBtn" class="outline secondary" value="Cancel" hidden>
-            <input type="submit" id="tagFormSubmit" value="Add tag">
-          </div>
-        </div>
-      </form>
-      <div id="tagManagerList"></div>
-      <div class="modal-actions modal-actions--end">
-        <input type="button" id="closeManageTagsBtn" class="outline secondary" value="Close">
-      </div>
-    </article>
-  </dialog>
-
-  <dialog id="filterDialog" aria-labelledby="filterTitle">
-    <article>
-      <h3 id="filterTitle">Filter places by tags</h3>
-
-      <fieldset>
-        <legend>Match</legend>
-        <label>
-          <input type="radio" name="filterMode" value="any" checked>
-          Any of these tags
-        </label>
-        <label>
-          <input type="radio" name="filterMode" value="all">
-          All of these tags
-        </label>
-      </fieldset>
-
-      <div id="filterTagsList"></div>
-
-      <div class="modal-actions">
-        <input type="button" id="filterClearBtn" class="outline secondary" value="Clear filter">
-        <div class="modal-actions__primary">
-          <input type="button" id="filterCancelBtn" class="outline secondary" value="Cancel">
-          <input type="button" id="filterApplyBtn" value="Apply">
+          <div class="photo-strip" id="placePhotos"></div>
         </div>
       </div>
-    </article>
+      <div class="sheet__footer">
+        <a class="btn" id="placeEditLink" href="#/map">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+            <path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3z" stroke="currentColor" stroke-width="2"
+              stroke-linejoin="round" />
+          </svg>
+          Edit place
+        </a>
+      </div>
+    </aside>
+
+    <!-- Add place, no scrim -->
+    <aside class="sheet" id="viewAddPrompt" aria-labelledby="addPromptText" hidden>
+      <div class="prompt">
+        <p class="prompt__text" id="addPromptText" tabindex="-1">Tap anywhere on the map to add a place</p>
+        <a class="btn btn--auto" href="#/map" data-close>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+          Cancel
+        </a>
+      </div>
+    </aside>
+
+    <!-- Add place -->
+    <aside class="sheet" id="viewAddPlace" aria-labelledby="addPlaceTitle" hidden>
+      <div class="sheet__body">
+        <form class="form" id="addPlaceForm">
+          <div class="sheet__header">
+            <h2 class="form__title" id="addPlaceTitle" tabindex="-1">Add a place</h2>
+            <a class="icon-btn" href="#/map" data-close aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+            </a>
+          </div>
+          <div class="form__fields">
+            <div class="field">
+              <label class="field__label" for="addPlaceName">Place name</label>
+              <input class="input" type="text" id="addPlaceName" name="name" placeholder="Add a place name"
+                autocomplete="off">
+            </div>
+            <div class="field">
+              <label class="field__label" for="addPlaceNote">Note</label>
+              <textarea class="textarea" id="addPlaceNote" name="description" placeholder="Add a note"></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="sheet__footer">
+        <button type="submit" form="addPlaceForm" class="btn" id="addPlaceSave" disabled>Save place</button>
+      </div>
+    </aside>
+
+    <!-- Edit place -->
+    <aside class="sheet" id="viewEditPlace" aria-labelledby="editPlaceTitle" hidden>
+      <a class="icon-btn sheet__back" href="#/map" data-back aria-label="Back to place">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M11 5l-7 7 7 7M4 12h16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round" />
+        </svg>
+      </a>
+      <a class="icon-btn sheet__close" href="#/map" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      </a>
+      <div class="sheet__body sheet__body--top-chrome">
+        <form class="form" id="editPlaceForm">
+          <h2 class="form__title" id="editPlaceTitle" tabindex="-1">Edit place</h2>
+          <div class="form__fields">
+            <div class="field">
+              <label class="field__label" for="editPlaceName">Place name</label>
+              <input class="input" type="text" id="editPlaceName" name="name" autocomplete="off">
+            </div>
+            <div class="field">
+              <label class="field__label" for="editPlaceNote">Note</label>
+              <textarea class="textarea" id="editPlaceNote" name="description"></textarea>
+            </div>
+          </div>
+          <section class="tag-group" aria-labelledby="assignedTagsHeading">
+            <h3 class="tag-group__title" id="assignedTagsHeading">Assigned tags</h3>
+            <ul class="tag-list" id="assignedTags"></ul>
+          </section>
+          <section class="tag-group" aria-labelledby="allTagsHeading">
+            <h3 class="tag-group__title" id="allTagsHeading">All tags</h3>
+            <ul class="tag-list" id="allTags"></ul>
+          </section>
+        </form>
+      </div>
+      <div class="sheet__footer sheet__footer--split">
+        <button type="button" class="btn btn--secondary btn--icon" id="editPlaceDelete" aria-label="Delete place">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button type="submit" form="editPlaceForm" class="btn" id="editPlaceSave">Save</button>
+      </div>
+    </aside>
+
+    <!-- Profile -->
+    <aside class="sheet" id="viewProfile" aria-labelledby="profileTitle" hidden>
+      <div class="sheet__body">
+        <form class="profile" id="profileForm">
+          <div class="sheet__header">
+            <h2 class="form__title" id="profileTitle" tabindex="-1">Profile</h2>
+            <a class="icon-btn" href="#/map" data-close aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+            </a>
+          </div>
+          <div class="profile__identity">
+            <span class="avatar avatar--xl" id="profileAvatar" role="img" aria-label="Your photo"></span>
+            <button type="button" class="btn btn--secondary btn--auto" id="profilePhoto">Change photo</button>
+          </div>
+          <div class="profile__fields">
+            <div class="field">
+              <label class="field__label" for="profileName">Display name</label>
+              <input class="input" type="text" id="profileName" name="displayName" autocomplete="nickname">
+            </div>
+            <div class="field">
+              <span class="field__label" id="profileEmailLabel">Email</span>
+              <p class="field__value" id="profileEmail" aria-labelledby="profileEmailLabel"></p>
+            </div>
+          </div>
+          <!-- Change password and Delete account - no API yet -->
+          <div class="profile__actions">
+            <button type="button" class="btn btn--secondary" id="profilePassword" disabled>Change password</button>
+            <button type="button" class="btn btn--danger" id="profileDelete" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+                <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Delete account
+            </button>
+          </div>
+        </form>
+      </div>
+      <div class="sheet__footer">
+        <button type="submit" form="profileForm" class="btn" id="profileSave">Save</button>
+      </div>
+    </aside>
+
+    <!-- Manage tags -->
+    <aside class="sheet" id="viewTags" aria-labelledby="tagsTitle" hidden>
+      <div class="sheet__body sheet__body--flush-end">
+        <div class="tags">
+          <div class="sheet__header">
+            <h2 class="tags__title" id="tagsTitle" tabindex="-1">Manage tags</h2>
+            <a class="icon-btn" href="#/map" data-close aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+            </a>
+          </div>
+          <ul class="tag-rows" id="tagRows"></ul>
+        </div>
+      </div>
+      <div class="sheet__footer">
+        <a class="btn" href="#/tags/new">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+          Add a tag
+        </a>
+      </div>
+    </aside>
+
+    <!-- Edit tag -->
+    <aside class="sheet" id="viewEditTag" aria-labelledby="editTagTitle" hidden>
+      <a class="icon-btn sheet__back" href="#/tags" data-back aria-label="Back to manage tags">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M11 5l-7 7 7 7M4 12h16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round" />
+        </svg>
+      </a>
+      <a class="icon-btn sheet__close" href="#/map" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      </a>
+      <div class="sheet__body sheet__body--top-chrome">
+        <form class="form" id="editTagForm">
+          <h2 class="form__title" id="editTagTitle" tabindex="-1">Edit tag</h2>
+          <div class="form__fields">
+            <div class="form__row">
+              <div class="field">
+                <label class="field__label" for="editTagName">Tag name</label>
+                <input class="input" type="text" id="editTagName" name="name" autocomplete="off">
+              </div>
+              <div class="field">
+                <label class="field__label" for="editTagEmoji">Emoji</label>
+                <input class="input input--emoji" type="text" id="editTagEmoji" name="emoji" autocomplete="off">
+              </div>
+            </div>
+            <div class="field">
+              <label class="field__label" for="editTagColor">Color</label>
+              <input class="input input--color" type="color" id="editTagColor" name="color">
+            </div>
+          </div>
+          <div class="preview">
+            <span class="preview__label">Preview</span>
+            <span class="chip" id="editTagPreview">
+              <span class="chip__emoji" aria-hidden="true" id="editTagPreviewEmoji"></span>
+              <span class="chip__label" id="editTagPreviewLabel"></span>
+            </span>
+          </div>
+        </form>
+      </div>
+      <div class="sheet__footer sheet__footer--split">
+        <button type="button" class="btn btn--secondary btn--icon" id="editTagDelete" aria-label="Delete tag">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button type="submit" form="editTagForm" class="btn" id="editTagSave">Save tag</button>
+      </div>
+    </aside>
+
+    <header class="top-bar-zone">
+      <div class="top-bar">
+        <span class="top-bar__brand">Wanderer</span>
+        <div class="top-bar__actions">
+          <a class="icon-btn" href="#/add" id="addPlaceButton" aria-label="Add a place">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+            </svg>
+          </a>
+          <button type="button" class="avatar" id="avatarButton" aria-label="Your account" aria-expanded="false"
+            aria-controls="viewAccountMenu"></button>
+        </div>
+      </div>
+    </header>
+
+    <div class="map-menu-zone">
+      <button type="button" class="map-menu" id="filterButton" aria-label="Filter places">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M8 10h8M8 14h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      </button>
+      <ul class="filter-chips" id="filterChips" aria-label="Filter by tag"></ul>
+    </div>
+
+    <div class="menu-zone">
+      <div class="menu" id="viewAccountMenu" hidden>
+        <ul class="menu__list">
+          <li><a class="menu__item" href="#/profile">Profile
+              <span class="menu__chevron" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span></a></li>
+          <li><a class="menu__item" href="#/tags">Manage tags
+              <span class="menu__chevron" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span></a></li>
+          <li><button type="button" class="menu__item" id="logoutButton">Log out</button></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full screen surfaces -->
+
+  <div class="splash" id="viewSplash" hidden>
+    <h1 class="splash__wordmark" tabindex="-1">Wanderer</h1>
+  </div>
+
+  <!-- Login -->
+  <div class="splash" id="viewLogin" hidden>
+    <h1 class="splash__wordmark">Wanderer</h1>
+    <div class="auth">
+      <form class="auth__form" id="loginForm">
+        <h2 class="auth__title" id="loginTitle" tabindex="-1">Sign in</h2>
+        <div class="auth__fields">
+          <div class="field">
+            <label class="field__label" for="loginEmail">Email</label>
+            <input class="input" type="email" id="loginEmail" name="email" autocomplete="email"
+              placeholder="you@example.com" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="loginPassword">Password</label>
+            <input class="input" type="password" id="loginPassword" name="password" autocomplete="current-password"
+              required>
+          </div>
+        </div>
+        <button type="submit" class="btn" id="loginSubmit">Sign in</button>
+        <p class="auth__alt">New here? <a href="#/register">Create an account</a></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Register -->
+  <div class="splash" id="viewRegister" hidden>
+    <h1 class="splash__wordmark">Wanderer</h1>
+    <div class="auth">
+      <form class="auth__form" id="registerForm">
+        <h2 class="auth__title" id="registerTitle" tabindex="-1">Create an account</h2>
+        <div class="auth__fields">
+          <div class="field">
+            <label class="field__label" for="registerEmail">Email</label>
+            <input class="input" type="email" id="registerEmail" name="email" autocomplete="email"
+              placeholder="you@example.com" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="registerPassword">Password</label>
+            <input class="input" type="password" id="registerPassword" name="password" autocomplete="new-password"
+              aria-describedby="passwordRules" required>
+          </div>
+          <div class="field">
+            <label class="field__label" for="registerConfirm">Confirm password</label>
+            <input class="input" type="password" id="registerConfirm" name="confirm" autocomplete="new-password"
+              aria-describedby="passwordRules" required>
+          </div>
+          <ul class="rules" id="passwordRules"></ul>
+        </div>
+        <button type="submit" class="btn" id="registerSubmit" disabled>Create account</button>
+        <p class="auth__alt">Already have an account? <a href="#/login">Sign in</a></p>
+      </form>
+    </div>
+  </div>
+
+  <template id="ruleTemplate">
+    <li class="rule" data-met="false">
+      <span class="rule__icon" aria-hidden="true">
+        <svg class="rule__dot" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" />
+        </svg>
+        <svg class="rule__check" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" />
+          <path d="M6.5 10.2l2.4 2.4 4.6-4.9" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="rule__text"></span>
+      <span class="rule__state visually-hidden">not met</span>
+    </li>
+  </template>
+
+  <!-- Verify -->
+  <div class="splash" id="viewVerify" hidden>
+    <h1 class="splash__wordmark">Wanderer</h1>
+    <div class="auth">
+      <div class="auth__form">
+        <h2 class="auth__title" id="verifyTitle" tabindex="-1">Check your email</h2>
+        <p class="auth__text">We sent a link to your address. Open it to finish setting up your account, then come back
+          and sign in.</p>
+        <button type="button" class="btn btn--secondary" id="verifyResend">Resend email</button>
+        <p class="auth__alt"><a href="#/login">Back to sign in</a></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Photos -->
+  <div class="viewer" id="viewPhotos" hidden>
+    <a class="viewer__back" href="#/map" data-back aria-label="Back to place">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M11 5l-7 7 7 7M4 12h16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+    </a>
+    <div class="viewer__pager" id="photoPager" role="group" aria-label="Photos" tabindex="-1"></div>
+    <p class="toast" id="photoHint">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 19V5M6 11l6-6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+      Swipe up for more
+    </p>
+  </div>
+
+  <!-- Confirmation dialog -->
+  <dialog class="dialog" id="confirmDialog" aria-labelledby="confirmTitle">
+    <div class="dialog__content">
+      <h2 class="dialog__title" id="confirmTitle"></h2>
+      <p class="dialog__text" id="confirmText"></p>
+      <div class="dialog__subject" id="confirmSubject" hidden>
+        <span class="thumb" id="confirmThumb"></span>
+        <span class="field__value" id="confirmSubjectName"></span>
+      </div>
+      <form method="dialog" class="dialog__actions">
+        <button type="submit" value="cancel" class="btn btn--secondary" id="confirmCancel">Cancel</button>
+        <button type="submit" value="confirm" class="btn btn--danger" id="confirmAccept">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+            <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span id="confirmAcceptLabel">Delete</span>
+        </button>
+      </form>
+    </div>
   </dialog>
 
+  <!-- Leave guard -->
+  <dialog class="dialog" id="leaveDialog" aria-labelledby="leaveTitle">
+    <div class="dialog__content">
+      <h2 class="dialog__title" id="leaveTitle">Leave without saving?</h2>
+      <p class="dialog__text" id="leaveText">Your changes won't be saved.</p>
+      <form method="dialog" class="dialog__actions">
+        <button type="submit" value="cancel" class="btn btn--secondary">Keep editing</button>
+        <button type="submit" value="confirm" class="btn btn--danger">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" style="width: 1.25rem; height: 1.25rem;">
+            <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Discard
+        </button>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Toast -->
+  <p class="toast" id="toast" hidden>
+    <span class="toast__icon" id="toastIcon" aria-hidden="true"></span>
+    <span id="toastText"></span>
+    <button type="button" class="toast__close" id="toastClose" aria-label="Dismiss" hidden>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+      </svg>
+    </button>
+  </p>
+
+  <script src="js/app.js" defer></script>
 </body>
 
 </html>

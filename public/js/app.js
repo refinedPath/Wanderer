@@ -6,7 +6,7 @@
   store.config = null;
   store.places = [];
   store.tags = [];
-  store.filter = [];
+  store.filter = { tags: [], match: 'any' };
   store.route = null;
   store.pendingEmail = null;
 
@@ -164,6 +164,8 @@
   const avatarButton = document.getElementById('avatarButton');
   let firstRender = true;
 
+  const conditionalSurfaces = ['viewMapEmpty'];
+
   function hideAll() {
     for (const view of Object.values(views)) {
       if (view.id) {
@@ -172,6 +174,9 @@
           node.hidden = true;
         }
       }
+    }
+    for (const id of conditionalSurfaces) {
+      document.getElementById(id).hidden = true;
     }
   }
 
@@ -205,13 +210,7 @@
       }
     }
 
-    if (route.view === 'verify') {
-      verifyResend.disabled = !store.pendingEmail || cooldownTimer !== null;
-      if (store.pendingEmail && cooldownTimer === null) {
-        startCooldown();
-      }
-    }
-
+    onRouteEntered(route);
     focusView(node);
     firstRender = false;
   }
@@ -375,8 +374,7 @@
         })
       });
       setState({ token: result.token });
-      await loadMe();
-      go('#/map');
+      await enterApp();
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -491,7 +489,14 @@
   });
 
   document.getElementById('logoutButton').addEventListener('click', () => {
-    setState({ token: null, pendingEmail: null, places: [], tags: [], filter: [] });
+    destroyMap();
+    setState({
+      token: null,
+      pendingEmail: null,
+      places: [],
+      tags: [],
+      filter: { tags: [], match: 'any' }
+    });
     go('#/login');
     loadConfig();
   });
@@ -516,9 +521,116 @@
     }
   });
 
+  const MAP_STYLE = 'https://tiles.openfreemap.org/styles/bright';
+  const MAP_CENTER = [-74.0135, 40.7054];
+  const MAP_ZOOM = 12;
+
+  let map = null;
+  let markers = [];
+
+  function initMap() {
+    if (map) {
+      return;
+    }
+    map = new maplibregl.Map({
+      container: 'map',
+      style: MAP_STYLE,
+      center: MAP_CENTER,
+      zoom: MAP_ZOOM
+    });
+  }
+
+  function clearMarkers() {
+    for (const marker of markers) {
+      marker.remove();
+    }
+    markers = [];
+  }
+
+  function destroyMap() {
+    clearMarkers();
+    if (map) {
+      map.remove();
+      map = null;
+    }
+  }
+
+  function openPlace(placeId) {
+    go('#/place/' + placeId);
+  }
+
+  function renderMarkers() {
+    if (!map) {
+      return;
+    }
+    clearMarkers();
+
+    const template = document.getElementById('markerTemplate');
+
+    for (const place of store.places) {
+      const element = template.content.cloneNode(true).firstElementChild;
+      const button = element.querySelector('.marker');
+      const emoji = element.querySelector('.marker__emoji');
+
+      if (/^#[0-9a-f]{6}$/i.test(place.primary_color || '')) {
+        button.style.color = place.primary_color;
+      }
+      emoji.textContent = place.primary_emoji || '';
+      button.setAttribute('aria-label', place.name);
+      button.addEventListener('click', () => openPlace(place.id));
+
+      markers.push(
+        new maplibregl.Marker({ element })
+          .setLngLat([place.longitude, place.latitude])
+          .addTo(map)
+      );
+    }
+  }
+
+  function renderMapEmptyState() {
+    const empty = document.getElementById('viewMapEmpty');
+    empty.hidden = !(store.route && store.route.view === 'map' && store.places.length === 0);
+  }
+
+  async function fetchPlaces(filter) {
+    const params = new URLSearchParams();
+    if (filter && filter.tags.length > 0) {
+      params.set('tags', filter.tags.join(','));
+      params.set('match', filter.match);
+    }
+    const query = params.toString();
+    const places = await authedFetch('/api/places' + (query ? '?' + query : ''));
+    setState({ places });
+  }
+
+  function onRouteEntered(route) {
+    if (route.view === 'verify') {
+      verifyResend.disabled = !store.pendingEmail || cooldownTimer !== null;
+      if (store.pendingEmail && cooldownTimer === null) {
+        startCooldown();
+      }
+    }
+
+    if (route.view === 'map' && map) {
+      map.resize();
+    }
+  }
+
+  async function enterApp() {
+    await loadMe();
+    initMap();
+    await fetchPlaces(store.filter);
+    go('#/map');
+  }
+
   store.addEventListener('change', (event) => {
     if (event.detail.changed.indexOf('route') !== -1) {
       render();
+      renderMapEmptyState();
+    }
+    if (event.detail.changed.indexOf('places') !== -1) {
+      renderMarkers();
+      renderMapEmptyState();
     }
   });
   window.addEventListener('hashchange', onHashChange);

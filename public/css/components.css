@@ -170,6 +170,10 @@
   font-size: var(--text-base);
 }
 
+.marker__emoji:empty {
+  display: none;
+}
+
 /* Scrim behind sheets and dialogs */
 .scrim {
   position: fixed;

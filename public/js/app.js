@@ -8,6 +8,7 @@
   store.tags = [];
   store.filter = [];
   store.route = null;
+  store.pendingEmail = null;
 
   function setState(patch) {
     Object.assign(store, patch);
@@ -56,12 +57,22 @@
     return body;
   }
 
-  function authedFetch(url, options) {
+  async function authedFetch(url, options) {
     const opts = options || {};
     const headers = Object.assign({}, opts.headers, {
       Authorization: 'Bearer ' + store.token
     });
-    return apiFetch(url, Object.assign({}, opts, { headers }));
+
+    try {
+      return await apiFetch(url, Object.assign({}, opts, { headers }));
+    } catch (error) {
+      if (error.status === 401) {
+        setState({ token: null, pendingEmail: null, places: [], tags: [], filter: [] });
+        showToast('Your session has ended. Please sign in again.', 'error');
+        go('#/login');
+      }
+      throw error;
+    }
   }
 
   function authedSendJSON(url, method, body) {
@@ -70,6 +81,26 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+  }
+
+  function setBusy(button, busy, label) {
+    button.disabled = busy;
+    if (!busy) {
+      button.classList.remove('is-loading');
+      button.removeAttribute('aria-busy');
+      button.textContent = label;
+      return;
+    }
+
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    const announcement = document.createElement('span');
+    announcement.className = 'visually-hidden';
+    announcement.textContent = 'Working';
+    button.replaceChildren(spinner, announcement);
   }
 
   const views = {
@@ -174,14 +205,27 @@
       }
     }
 
+    if (route.view === 'verify') {
+      verifyResend.disabled = !store.pendingEmail || cooldownTimer !== null;
+      if (store.pendingEmail && cooldownTimer === null) {
+        startCooldown();
+      }
+    }
+
     focusView(node);
     firstRender = false;
   }
+
+  const PUBLIC_VIEWS = ['splash', 'login', 'register', 'verify'];
 
   function onHashChange() {
     const route = parse(window.location.hash || '#/');
     if (!route) {
       window.location.replace('#/map');
+      return;
+    }
+    if (!store.token && !PUBLIC_VIEWS.includes(route.view)) {
+      window.location.replace('#/login');
       return;
     }
     setState({ route });
@@ -270,7 +314,6 @@
     if (policy.require_symbol) {
       rules.push({ key: 'symbol', text: 'A symbol' });
     }
-    // Not policy. The server never sees the confirmation field.
     rules.push({ key: 'match', text: 'Both passwords match' });
 
     list.replaceChildren();
@@ -305,6 +348,152 @@
 
   toastClose.addEventListener('click', () => {
     toast.hidden = true;
+  });
+
+  async function loadMe() {
+    const me = await authedFetch('/api/config/me');
+    setState({ config: me });
+    if (/^#[0-9a-f]{6}$/i.test(me.tag.default_color)) {
+      document.documentElement.style.setProperty('--tag-color-default', me.tag.default_color);
+    }
+  }
+
+  const loginForm = document.getElementById('loginForm');
+  const loginSubmit = document.getElementById('loginSubmit');
+
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(loginSubmit, true);
+
+    try {
+      const result = await apiFetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('loginEmail').value.trim(),
+          password: document.getElementById('loginPassword').value
+        })
+      });
+      setState({ token: result.token });
+      await loadMe();
+      go('#/map');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(loginSubmit, false, 'Sign in');
+    }
+  });
+
+  const registerForm = document.getElementById('registerForm');
+  const registerEmail = document.getElementById('registerEmail');
+  const registerPassword = document.getElementById('registerPassword');
+  const registerConfirm = document.getElementById('registerConfirm');
+  const registerSubmit = document.getElementById('registerSubmit');
+
+  function checkPasswordRules() {
+    const policy = store.config?.password;
+    if (!policy) {
+      return;
+    }
+
+    const value = registerPassword.value;
+    const met = {
+      length: value.length >= policy.min_length,
+      number: /[0-9]/.test(value),
+      lowercase: /[a-z]/.test(value),
+      uppercase: /[A-Z]/.test(value),
+      symbol: /[^A-Za-z0-9]/.test(value),
+      match: value.length > 0 && value === registerConfirm.value
+    };
+
+    let allMet = true;
+    for (const rule of document.querySelectorAll('#passwordRules .rule')) {
+      const passed = met[rule.dataset.rule];
+      rule.dataset.met = passed ? 'true' : 'false';
+      rule.querySelector('.rule__state').textContent = passed ? 'met' : 'not met';
+      if (!passed) {
+        allMet = false;
+      }
+    }
+    registerSubmit.disabled = !allMet;
+  }
+
+  registerPassword.addEventListener('input', checkPasswordRules);
+  registerConfirm.addEventListener('input', checkPasswordRules);
+
+  registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(registerSubmit, true);
+    const email = registerEmail.value.trim();
+
+    try {
+      await apiFetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: registerPassword.value })
+      });
+      setState({ pendingEmail: email });
+
+      if (store.config.auto_verify_new_accounts) {
+        showToast('Account created. You can sign in now.');
+        go('#/login');
+      } else {
+        go('#/verify');
+      }
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(registerSubmit, false, 'Create account');
+      checkPasswordRules();
+    }
+  });
+
+  const RESEND_COOLDOWN_SECONDS = 60;
+  const verifyResend = document.getElementById('verifyResend');
+  let cooldownEndsAt = 0;
+  let cooldownTimer = null;
+
+  function tickCooldown() {
+    const secondsLeft = Math.ceil((cooldownEndsAt - Date.now()) / 1000);
+    if (secondsLeft <= 0) {
+      window.clearInterval(cooldownTimer);
+      cooldownTimer = null;
+      verifyResend.disabled = false;
+      verifyResend.textContent = 'Resend email';
+      return;
+    }
+    verifyResend.textContent = 'Resend in ' + secondsLeft + 's';
+  }
+
+  function startCooldown() {
+    cooldownEndsAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+    verifyResend.disabled = true;
+    window.clearInterval(cooldownTimer);
+    tickCooldown();
+    cooldownTimer = window.setInterval(tickCooldown, 1000);
+  }
+
+  verifyResend.addEventListener('click', async () => {
+    if (!store.pendingEmail) {
+      return;
+    }
+    startCooldown();
+    try {
+      await apiFetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: store.pendingEmail })
+      });
+      showToast('Verification email sent.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+
+  document.getElementById('logoutButton').addEventListener('click', () => {
+    setState({ token: null, pendingEmail: null, places: [], tags: [], filter: [] });
+    go('#/login');
+    loadConfig();
   });
 
   avatarButton.addEventListener('click', (event) => {
@@ -345,7 +534,38 @@
     }
   }
 
-  loadConfig();
+  async function handleVerifyLink() {
+    const token = new URLSearchParams(window.location.search).get('verify');
+    if (!token) {
+      return false;
+    }
+
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+
+    try {
+      await apiFetch('/api/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      showToast('Your email is verified. You can sign in now.');
+      go('#/login');
+    } catch (error) {
+      showToast(error.message, 'error');
+      go(error.status === 410 ? '#/verify' : '#/login');
+    }
+    return true;
+  }
+
+  async function boot() {
+    await loadConfig();
+    const cameFromEmail = await handleVerifyLink();
+    if (!cameFromEmail && store.route.view === 'splash') {
+      go(store.token ? '#/map' : '#/login');
+    }
+  }
+
+  boot();
 
   window.wanderer = {
     store,

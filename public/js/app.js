@@ -16,6 +16,62 @@
     }));
   }
 
+  function messageFrom(body) {
+    if (!body) {
+      return null;
+    }
+    if (typeof body.error === 'string') {
+      return body.error;
+    }
+    if (body.errors && typeof body.errors === 'object') {
+      const messages = Object.values(body.errors);
+      if (messages.length > 0) {
+        return messages.join(' ');
+      }
+    }
+    return null;
+  }
+
+  async function apiFetch(url, options) {
+    const response = await fetch(url, options);
+
+    if (response.status === 204) {
+      return null;
+    }
+
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      const error = new Error(messageFrom(body) || 'Request failed (' + response.status + ')');
+      error.status = response.status;
+      error.body = body;
+      throw error;
+    }
+
+    return body;
+  }
+
+  function authedFetch(url, options) {
+    const opts = options || {};
+    const headers = Object.assign({}, opts.headers, {
+      Authorization: 'Bearer ' + store.token
+    });
+    return apiFetch(url, Object.assign({}, opts, { headers }));
+  }
+
+  function authedSendJSON(url, method, body) {
+    return authedFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
   const views = {
     splash: { id: 'viewSplash', kind: 'screen' },
     login: { id: 'viewLogin', kind: 'screen' },
@@ -128,7 +184,7 @@
       window.location.replace('#/map');
       return;
     }
-    setState({ route: route });
+    setState({ route });
   }
 
   function go(hash) {
@@ -197,6 +253,36 @@
     }
   });
 
+  function renderPasswordRules(policy) {
+    const list = document.getElementById('passwordRules');
+    const template = document.getElementById('ruleTemplate');
+    const rules = [{ key: 'length', text: 'At least ' + policy.min_length + ' characters' }];
+
+    if (policy.require_number) {
+      rules.push({ key: 'number', text: 'A number' });
+    }
+    if (policy.require_lowercase) {
+      rules.push({ key: 'lowercase', text: 'A lower case letter' });
+    }
+    if (policy.require_uppercase) {
+      rules.push({ key: 'uppercase', text: 'An upper case letter' });
+    }
+    if (policy.require_symbol) {
+      rules.push({ key: 'symbol', text: 'A symbol' });
+    }
+    // Not policy. The server never sees the confirmation field.
+    rules.push({ key: 'match', text: 'Both passwords match' });
+
+    list.replaceChildren();
+    rules.forEach((rule) => {
+      const item = template.content.cloneNode(true);
+      const li = item.querySelector('.rule');
+      li.setAttribute('data-rule', rule.key);
+      li.querySelector('.rule__text').textContent = rule.text;
+      list.appendChild(item);
+    });
+  }
+
   const toast = document.getElementById('toast');
   const toastText = document.getElementById('toastText');
   const toastClose = document.getElementById('toastClose');
@@ -249,13 +335,28 @@
   window.addEventListener('hashchange', onHashChange);
   onHashChange();
 
+  async function loadConfig() {
+    try {
+      const config = await apiFetch('/api/config');
+      setState({ config });
+      renderPasswordRules(config.password);
+    } catch (error) {
+      showToast('Could not load app configuration.', 'error');
+    }
+  }
+
+  loadConfig();
+
   window.wanderer = {
     store,
     setState,
+    apiFetch,
+    authedFetch,
+    authedSendJSON,
     go,
-    registerGuard: registerGuard,
-    confirmAction: confirmAction,
-    showToast: showToast
+    registerGuard,
+    confirmAction,
+    showToast
   };
 
 })();

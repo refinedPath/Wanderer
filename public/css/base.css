@@ -84,6 +84,10 @@ button {
   outline-offset: 2px;
 }
 
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
 /* Respect a reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
 

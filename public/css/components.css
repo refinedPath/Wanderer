@@ -292,6 +292,11 @@
   scroll-snap-type: x proximity;
 }
 
+/* No photo API endpoints yet */
+.photo-strip:empty {
+  display: none;
+}
+
 .photo {
   flex: 0 0 auto;
   width: 7.8125rem;
@@ -367,6 +372,10 @@
 .chip__emoji {
   font-size: var(--text-base);
   line-height: 1;
+}
+
+.chip__emoji:empty {
+  display: none;
 }
 
 /* Assign and unassign */

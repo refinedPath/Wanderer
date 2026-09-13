@@ -622,6 +622,63 @@
     setState({ places });
   }
 
+  function placeUrl(placeId, suffix) {
+    return '/api/places/' + encodeURIComponent(placeId) + (suffix || '');
+  }
+
+  function clearPlaceView() {
+    document.getElementById('placeTitle').textContent = '';
+    document.getElementById('placeDesc').textContent = '';
+    document.getElementById('placeTags').replaceChildren();
+  }
+
+  function renderPlaceView(place, tags) {
+    document.getElementById('placeTitle').textContent = place.name;
+    document.getElementById('placeDesc').textContent = place.description || '';
+    document.getElementById('placeEditLink')
+      .setAttribute('href', '#/place/' + place.id + '/edit');
+
+    const list = document.getElementById('placeTags');
+    const template = document.getElementById('chipTemplate');
+    list.replaceChildren();
+
+    for (const tag of tags) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
+
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
+      }
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      list.appendChild(item);
+    }
+  }
+
+  let placeBeingLoaded = null;
+
+  async function loadPlace(placeId) {
+    clearPlaceView();
+    placeBeingLoaded = placeId;
+
+    try {
+      const [place, tags] = await Promise.all([
+        authedFetch(placeUrl(placeId)),
+        authedFetch(placeUrl(placeId, '/tags'))
+      ]);
+      if (placeBeingLoaded !== placeId) {
+        return;
+      }
+      renderPlaceView(place, tags);
+    } catch (error) {
+      if (placeBeingLoaded !== placeId) {
+        return;
+      }
+      showToast(error.message, 'error');
+      go('#/map');
+    }
+  }
+
   function onRouteEntered(route) {
     if (route.view === 'login') {
       loginForm.reset();
@@ -636,6 +693,12 @@
       resumeCooldown();
     } else {
       stopCooldown();
+    }
+
+    if (route.view === 'place') {
+      loadPlace(route.params.placeId);
+    } else {
+      placeBeingLoaded = null;
     }
 
     if (route.view === 'map' && map) {

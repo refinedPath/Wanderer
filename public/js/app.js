@@ -9,6 +9,7 @@
   store.filter = { tags: [], match: 'any' };
   store.route = null;
   store.pendingEmail = null;
+  store.pendingLocation = null;
 
   function setState(patch) {
     Object.assign(store, patch);
@@ -262,6 +263,30 @@
     openDialog(leaveDialog);
   });
 
+  function navigate(hash) {
+    if (currentlyDirty()) {
+      pendingHash = hash;
+      openDialog(leaveDialog);
+      return;
+    }
+    go(hash);
+  }
+
+  scrim.addEventListener('click', () => {
+    navigate('#/map');
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || document.querySelector('dialog[open]')) {
+      return;
+    }
+    const view = store.route && views[store.route.view];
+    if (!view || view.kind !== 'sheet') {
+      return;
+    }
+    navigate('#/map');
+  });
+
   leaveDialog.addEventListener('close', () => {
     const target = pendingHash;
     pendingHash = null;
@@ -512,6 +537,7 @@
     setState({
       token: null,
       pendingEmail: null,
+      pendingLocation: null,
       places: [],
       tags: [],
       filter: { tags: [], match: 'any' }
@@ -557,6 +583,25 @@
       center: MAP_CENTER,
       zoom: MAP_ZOOM
     });
+
+    map.on('click', (event) => {
+      if (!store.route || store.route.view !== 'addPrompt') {
+        return;
+      }
+      setState({
+        pendingLocation: {
+          latitude: event.lngLat.lat,
+          longitude: event.lngLat.lng
+        }
+      });
+      go('#/add/form');
+    });
+  }
+
+  function setMapCursor(cursor) {
+    if (map) {
+      map.getCanvas().style.cursor = cursor;
+    }
   }
 
   function clearMarkers() {
@@ -596,7 +641,10 @@
       }
       emoji.textContent = place.primary_emoji || '';
       button.setAttribute('aria-label', place.name);
-      button.addEventListener('click', () => openPlace(place.id));
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openPlace(place.id);
+      });
 
       markers.push(
         new maplibregl.Marker({ element })
@@ -621,6 +669,51 @@
     const places = await authedFetch('/api/places' + (query ? '?' + query : ''));
     setState({ places });
   }
+
+
+
+
+
+
+
+
+
+
+  const addPlaceForm = document.getElementById('addPlaceForm');
+  const addPlaceName = document.getElementById('addPlaceName');
+  const addPlaceNote = document.getElementById('addPlaceNote');
+  const addPlaceSave = document.getElementById('addPlaceSave');
+
+  addPlaceName.addEventListener('input', () => {
+    addPlaceSave.disabled = addPlaceName.value.trim() === '';
+  });
+
+  addPlaceForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!store.pendingLocation) {
+      return;
+    }
+    setBusy(addPlaceSave, true);
+
+    try {
+      const place = await authedSendJSON('/api/places', 'POST', {
+        name: addPlaceName.value.trim(),
+        description: addPlaceNote.value.trim(),
+        latitude: store.pendingLocation.latitude,
+        longitude: store.pendingLocation.longitude
+      });
+
+      await fetchPlaces(store.filter);
+      setState({ pendingLocation: null });
+      showToast('Place saved.');
+      go('#/place/' + place.id);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(addPlaceSave, false, 'Save place');
+      addPlaceSave.disabled = addPlaceName.value.trim() === '';
+    }
+  });
 
   function placeUrl(placeId, suffix) {
     return '/api/places/' + encodeURIComponent(placeId) + (suffix || '');
@@ -701,6 +794,21 @@
       placeBeingLoaded = null;
     }
 
+    setMapCursor(route.view === 'addPrompt' ? 'crosshair' : '');
+
+    if (route.view === 'addPlace') {
+      if (!store.pendingLocation) {
+        go('#/add');
+        return;
+      }
+      addPlaceForm.reset();
+      addPlaceSave.disabled = true;
+    }
+
+    if (route.view !== 'addPrompt' && route.view !== 'addPlace' && store.pendingLocation) {
+      setState({ pendingLocation: null });
+    }
+
     if (route.view === 'map' && map) {
       map.resize();
     }
@@ -709,6 +817,7 @@
   async function enterApp() {
     await loadMe();
     initMap();
+    setMapCursor('');
     await fetchPlaces(store.filter);
     go('#/map');
   }

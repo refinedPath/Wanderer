@@ -436,6 +436,7 @@
         showToast('Account created. You can sign in now.');
         go('#/login');
       } else {
+        startCooldown();
         go('#/verify');
       }
     } catch (error) {
@@ -463,12 +464,30 @@
     verifyResend.textContent = 'Resend in ' + secondsLeft + 's';
   }
 
-  function startCooldown() {
-    cooldownEndsAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+  function runCooldown() {
     verifyResend.disabled = true;
     window.clearInterval(cooldownTimer);
     tickCooldown();
     cooldownTimer = window.setInterval(tickCooldown, 1000);
+  }
+
+  function startCooldown() {
+    cooldownEndsAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+    runCooldown();
+  }
+
+  function resumeCooldown() {
+    if (cooldownEndsAt > Date.now()) {
+      runCooldown();
+      return;
+    }
+    verifyResend.disabled = !store.pendingEmail;
+    verifyResend.textContent = 'Resend email';
+  }
+
+  function stopCooldown() {
+    window.clearInterval(cooldownTimer);
+    cooldownTimer = null;
   }
 
   verifyResend.addEventListener('click', async () => {
@@ -604,11 +623,19 @@
   }
 
   function onRouteEntered(route) {
+    if (route.view === 'login') {
+      loginForm.reset();
+    }
+
+    if (route.view === 'register') {
+      registerForm.reset();
+      checkPasswordRules();
+    }
+
     if (route.view === 'verify') {
-      verifyResend.disabled = !store.pendingEmail || cooldownTimer !== null;
-      if (store.pendingEmail && cooldownTimer === null) {
-        startCooldown();
-      }
+      resumeCooldown();
+    } else {
+      stopCooldown();
     }
 
     if (route.view === 'map' && map) {

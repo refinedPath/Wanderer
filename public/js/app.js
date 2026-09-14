@@ -783,6 +783,7 @@
   const editPlaceName = document.getElementById('editPlaceName');
   const editPlaceNote = document.getElementById('editPlaceNote');
   const editPlaceSave = document.getElementById('editPlaceSave');
+  const editPlaceDelete = document.getElementById('editPlaceDelete');
   const assignedTagsList = document.getElementById('assignedTags');
   const allTagsList = document.getElementById('allTags');
 
@@ -954,6 +955,36 @@
       go('#/map');
     }
   }
+
+  async function deleteCurrentPlace() {
+    const placeId = editPlaceId;
+    setBusy(editPlaceSave, true);
+    editPlaceDelete.disabled = true;
+
+    try {
+      await authedFetch(placeUrl(placeId), { method: 'DELETE' });
+
+      editPlaceId = null;
+      await fetchPlaces(store.filter);
+      showToast('Place deleted.');
+      go('#/map');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editPlaceSave, false, 'Save');
+      editPlaceDelete.disabled = false;
+    }
+  }
+
+  editPlaceDelete.addEventListener('click', () => {
+    const name = editPlaceName.value.trim();
+    confirmAction({
+      title: 'Delete this place?',
+      text: (name || 'This place') + ' will be removed from your map. This cannot be undone.',
+      accept: 'Delete',
+      onConfirm: deleteCurrentPlace
+    });
+  });
 
   editPlaceForm.addEventListener('submit', async (event) => {
     event.preventDefault();

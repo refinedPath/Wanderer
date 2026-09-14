@@ -11,6 +11,7 @@
   store.pendingEmail = null;
   store.pendingLocation = null;
   store.selectedPlaceId = null;
+  store.accountEmail = null;
 
   function setState(patch) {
     Object.assign(store, patch);
@@ -73,6 +74,7 @@
         clearSignedInViews();
         setState({
           token: null,
+          accountEmail: null,
           pendingEmail: null,
           pendingLocation: null,
           selectedPlaceId: null,
@@ -407,16 +409,18 @@
     event.preventDefault();
     setBusy(loginSubmit, true);
 
+    const email = document.getElementById('loginEmail').value.trim();
+
     try {
       const result = await apiFetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: document.getElementById('loginEmail').value.trim(),
+          email,
           password: document.getElementById('loginPassword').value
         })
       });
-      setState({ token: result.token });
+      setState({ token: result.token, accountEmail: email });
       await enterApp();
     } catch (error) {
       showToast(error.message, 'error');
@@ -555,8 +559,10 @@
     clearSignedInViews();
     setState({
       token: null,
+      accountEmail: null,
       pendingEmail: null,
       pendingLocation: null,
+      selectedPlaceId: null,
       places: [],
       tags: [],
       filter: { tags: [], match: 'any' }
@@ -710,6 +716,9 @@
   }
 
   async function fetchPlaces(filter) {
+    if (!store.token) {
+      return;
+    }
     const params = new URLSearchParams();
     if (filter && filter.tags.length > 0) {
       params.set('tags', filter.tags.join(','));
@@ -1354,7 +1363,26 @@
     }
   }, true);
 
+  const profileEmail = document.getElementById('profileEmail');
+  const profileName = document.getElementById('profileName');
+  const profilePhoto = document.getElementById('profilePhoto');
+  const profileSave = document.getElementById('profileSave');
+
+  profileName.disabled = true;
+  profilePhoto.disabled = true;
+  profileSave.disabled = true;
+
+  function renderProfile() {
+    profileEmail.textContent = store.accountEmail || '';
+  }
+
+  function clearProfile() {
+    profileEmail.textContent = '';
+    profileName.value = '';
+  }
+
   function clearSignedInViews() {
+    clearProfile();
     clearPlaceView();
     clearEditTagFields();
     editPlaceName.value = '';
@@ -1393,6 +1421,10 @@
       loadEditPlace(route.params.placeId);
     } else {
       editPlaceId = null;
+    }
+
+    if (route.view === 'profile') {
+      renderProfile();
     }
 
     if (route.view === 'tags') {

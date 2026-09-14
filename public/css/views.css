@@ -50,6 +50,7 @@
 .place__desc {
   font-size: var(--text-base);
   line-height: var(--leading-tight);
+  white-space: pre-line;
 }
 
 /* Add place prompt */

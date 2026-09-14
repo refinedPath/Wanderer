@@ -423,6 +423,12 @@
   fill: currentColor;
 }
 
+.chip__action:disabled,
+.chip__star:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* Selectable chip for the filter state */
 .chip--selectable {
   border: 2px solid transparent;

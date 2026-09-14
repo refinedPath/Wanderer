@@ -284,6 +284,7 @@
     if (!view || view.kind !== 'sheet') {
       return;
     }
+    event.preventDefault();
     navigate('#/map');
   });
 
@@ -772,6 +773,202 @@
     }
   }
 
+  const editPlaceForm = document.getElementById('editPlaceForm');
+  const editPlaceName = document.getElementById('editPlaceName');
+  const editPlaceNote = document.getElementById('editPlaceNote');
+  const editPlaceSave = document.getElementById('editPlaceSave');
+  const assignedTagsList = document.getElementById('assignedTags');
+  const allTagsList = document.getElementById('allTags');
+
+  const MINUS_PATH = 'M6 12h12';
+  const PLUS_PATH = 'M12 6v12M6 12h12';
+
+  let editPlaceId = null;
+  let editPlaceSaved = { name: '', description: '' };
+  let editPlacePrimaryTagId = null;
+  let editPlaceAssigned = [];
+  let editPlaceAll = [];
+  let editPlaceBusy = false;
+  let editPlaceRefocus = null;
+
+  function isEditPlaceDirty() {
+    return editPlaceId !== null && (
+      editPlaceName.value.trim() !== editPlaceSaved.name ||
+      editPlaceNote.value.trim() !== editPlaceSaved.description
+    );
+  }
+
+  registerGuard('editPlace', isEditPlaceDirty);
+
+  function placeTagUrl(tagId) {
+    return placeUrl(editPlaceId, '/tags/' + encodeURIComponent(tagId));
+  }
+
+  function buildEditChip(tag, isAssigned) {
+    const item = document.getElementById('editChipTemplate').content.cloneNode(true);
+    const chip = item.querySelector('.chip');
+    const action = item.querySelector('.chip__action');
+    const star = item.querySelector('.chip__star');
+    const isPrimary = tag.id === editPlacePrimaryTagId;
+
+    if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+      chip.style.background = tag.color;
+    }
+    item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+    item.querySelector('.chip__label').textContent = tag.name;
+
+    action.querySelector('path').setAttribute('d', isAssigned ? MINUS_PATH : PLUS_PATH);
+    action.setAttribute('aria-label', (isAssigned ? 'Unassign ' : 'Assign ') + tag.name);
+    action.disabled = editPlaceBusy;
+    action.dataset.tagId = tag.id;
+    action.dataset.control = 'action';
+    action.addEventListener('click', () => toggleAssigned(tag, isAssigned));
+
+    star.setAttribute('aria-pressed', isPrimary ? 'true' : 'false');
+    star.setAttribute('aria-label',
+      (isPrimary ? 'Clear ' : 'Make ') + tag.name + ' the primary tag');
+    star.disabled = editPlaceBusy;
+    star.dataset.tagId = tag.id;
+    star.dataset.control = 'star';
+    star.addEventListener('click', () => togglePrimary(tag, isPrimary, isAssigned));
+
+    return item;
+  }
+
+  function renderEditPlaceTags() {
+    assignedTagsList.replaceChildren();
+    allTagsList.replaceChildren();
+
+    const assignedIds = new Set(editPlaceAssigned.map((tag) => tag.id));
+
+    for (const tag of editPlaceAssigned) {
+      assignedTagsList.appendChild(buildEditChip(tag, true));
+    }
+    for (const tag of editPlaceAll) {
+      if (!assignedIds.has(tag.id)) {
+        allTagsList.appendChild(buildEditChip(tag, false));
+      }
+    }
+
+    if (editPlaceRefocus && !editPlaceBusy) {
+      const controls = document.querySelectorAll('#assignedTags [data-tag-id], #allTags [data-tag-id]');
+      for (const control of controls) {
+        if (control.dataset.tagId === editPlaceRefocus.tagId &&
+          control.dataset.control === editPlaceRefocus.control) {
+          control.focus();
+          break;
+        }
+      }
+      editPlaceRefocus = null;
+    }
+  }
+
+  async function loadEditPlaceTags(resetFields) {
+    const [place, assigned, all] = await Promise.all([
+      authedFetch(placeUrl(editPlaceId)),
+      authedFetch(placeUrl(editPlaceId, '/tags')),
+      authedFetch('/api/tags')
+    ]);
+
+    editPlacePrimaryTagId = place.primary_tag_id;
+    editPlaceAssigned = assigned;
+    editPlaceAll = all;
+    setState({ tags: all });
+
+    if (resetFields) {
+      editPlaceName.value = place.name;
+      editPlaceNote.value = place.description || '';
+      editPlaceSaved = { name: place.name, description: place.description || '' };
+    }
+    renderEditPlaceTags();
+  }
+
+  async function runTagAction(work, refocus) {
+    if (editPlaceBusy) {
+      return;
+    }
+    editPlaceBusy = true;
+    editPlaceRefocus = refocus;
+    renderEditPlaceTags();
+
+    try {
+      await work();
+      await loadEditPlaceTags(false);
+      await fetchPlaces(store.filter);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      editPlaceBusy = false;
+      renderEditPlaceTags();
+    }
+  }
+
+  function toggleAssigned(tag, isAssigned) {
+    runTagAction(
+      () => authedFetch(placeTagUrl(tag.id), { method: isAssigned ? 'DELETE' : 'PUT' }),
+      { tagId: tag.id, control: 'action' }
+    );
+  }
+
+  function togglePrimary(tag, isPrimary, isAssigned) {
+    runTagAction(async () => {
+      if (isPrimary) {
+        await authedFetch(placeUrl(editPlaceId, '/primary-tag'), { method: 'DELETE' });
+        return;
+      }
+      if (!isAssigned) {
+        await authedFetch(placeTagUrl(tag.id), { method: 'PUT' });
+      }
+      await authedFetch(
+        placeUrl(editPlaceId, '/primary-tag/' + encodeURIComponent(tag.id)),
+        { method: 'PUT' }
+      );
+    }, { tagId: tag.id, control: 'star' });
+  }
+
+  async function loadEditPlace(placeId) {
+    editPlaceId = placeId;
+    editPlaceName.value = '';
+    editPlaceNote.value = '';
+    editPlaceSaved = { name: '', description: '' };
+    editPlacePrimaryTagId = null;
+    editPlaceAssigned = [];
+    editPlaceAll = [];
+    editPlaceBusy = false;
+    editPlaceRefocus = null;
+    renderEditPlaceTags();
+
+    try {
+      await loadEditPlaceTags(true);
+    } catch (error) {
+      if (editPlaceId !== placeId) {
+        return;
+      }
+      showToast(error.message, 'error');
+      go('#/map');
+    }
+  }
+
+  editPlaceForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(editPlaceSave, true);
+
+    try {
+      const name = editPlaceName.value.trim();
+      const description = editPlaceNote.value.trim();
+      await authedSendJSON(placeUrl(editPlaceId), 'PUT', { name, description });
+
+      editPlaceSaved = { name, description };
+      await fetchPlaces(store.filter);
+      showToast('Place saved.');
+      go('#/place/' + editPlaceId);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editPlaceSave, false, 'Save');
+    }
+  });
+
   function onRouteEntered(route) {
     if (route.view === 'login') {
       loginForm.reset();
@@ -792,6 +989,12 @@
       loadPlace(route.params.placeId);
     } else {
       placeBeingLoaded = null;
+    }
+
+    if (route.view === 'editPlace') {
+      loadEditPlace(route.params.placeId);
+    } else {
+      editPlaceId = null;
     }
 
     setMapCursor(route.view === 'addPrompt' ? 'crosshair' : '');

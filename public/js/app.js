@@ -163,6 +163,8 @@
   const app = document.getElementById('app');
   const scrim = document.getElementById('scrim');
   const avatarButton = document.getElementById('avatarButton');
+  const topBarZone = document.getElementById('topBarZone');
+  const mapMenuZone = document.getElementById('mapMenuZone');
   let firstRender = true;
 
   const conditionalSurfaces = ['viewMapEmpty'];
@@ -198,6 +200,10 @@
     const node = view.id ? document.getElementById(view.id) : null;
 
     hideAll();
+
+    const isFullScreen = view.kind === 'screen';
+    topBarZone.hidden = isFullScreen;
+    mapMenuZone.hidden = isFullScreen;
 
     app.classList.toggle('is-sheet-open', view.kind === 'sheet' && view.scrim === true);
     scrim.hidden = !(view.kind === 'sheet' && view.scrim === true);

@@ -20,7 +20,7 @@
 <body>
   <div class="app" id="app">
     <div class="map" id="map"></div>
-    <div class="scrim" id="scrim" data-close></div>
+    <div class="scrim" id="scrim" data-close hidden></div>
 
     <!-- No places on the map -->
     <aside class="sheet" id="viewMapEmpty" aria-labelledby="mapEmptyTitle" hidden>
@@ -279,7 +279,7 @@
       </div>
     </aside>
 
-    <header class="top-bar-zone">
+    <header class="top-bar-zone" id="topBarZone" hidden>
       <div class="top-bar">
         <span class="top-bar__brand">Wanderer</span>
         <div class="top-bar__actions">
@@ -294,7 +294,7 @@
       </div>
     </header>
 
-    <div class="map-menu-zone">
+    <div class="map-menu-zone" id="mapMenuZone" hidden>
       <button type="button" class="map-menu" id="filterButton" aria-label="Filter places">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M8 10h8M8 14h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />

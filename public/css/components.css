@@ -159,6 +159,30 @@
   place-items: center;
 }
 
+.marker--selected .marker__pin {
+  box-shadow: 0 0 0 3px var(--color-ink);
+}
+
+@keyframes marker-bounce {
+
+  0%,
+  100% {
+    transform: translate(-50%, -100%);
+  }
+
+  40% {
+    transform: translate(-50%, calc(-100% - 0.5rem));
+  }
+
+  70% {
+    transform: translate(-50%, calc(-100% - 0.125rem));
+  }
+}
+
+.marker--bounce {
+  animation: marker-bounce 1000ms ease-out;
+}
+
 .marker__emoji {
   width: 1.875rem;
   height: 1.875rem;

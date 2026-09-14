@@ -10,6 +10,7 @@
   store.route = null;
   store.pendingEmail = null;
   store.pendingLocation = null;
+  store.selectedPlaceId = null;
 
   function setState(patch) {
     Object.assign(store, patch);
@@ -579,6 +580,7 @@
 
   let map = null;
   let markers = [];
+  let bouncedPlaceId = null;
 
   function initMap() {
     if (map) {
@@ -591,8 +593,21 @@
       zoom: MAP_ZOOM
     });
 
+    let centreAtPressStart = null;
+    map.on('movestart', () => {
+      centreAtPressStart = map.getCenter();
+    });
+
     map.on('click', (event) => {
+      const centreNow = map.getCenter();
+      const mapMoved = centreAtPressStart !== null &&
+        (centreAtPressStart.lng !== centreNow.lng || centreAtPressStart.lat !== centreNow.lat);
+      centreAtPressStart = null;
+
       if (!store.route || store.route.view !== 'addPrompt') {
+        if (!mapMoved && store.selectedPlaceId) {
+          setState({ selectedPlaceId: null });
+        }
         return;
       }
       setState({
@@ -648,6 +663,14 @@
       }
       emoji.textContent = place.primary_emoji || '';
       button.setAttribute('aria-label', place.name);
+
+      if (place.id === store.selectedPlaceId) {
+        button.classList.add('marker--selected');
+        if (store.selectedPlaceId !== bouncedPlaceId) {
+          button.classList.add('marker--bounce');
+          bouncedPlaceId = store.selectedPlaceId;
+        }
+      }
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         openPlace(place.id);
@@ -1034,6 +1057,13 @@
       editPlaceId = null;
     }
 
+    const viewedPlaceId = (route.view === 'place' || route.view === 'editPlace')
+      ? route.params.placeId
+      : null;
+    if (viewedPlaceId && viewedPlaceId !== store.selectedPlaceId) {
+      setState({ selectedPlaceId: viewedPlaceId });
+    }
+
     setMapCursor(route.view === 'addPrompt' ? 'crosshair' : '');
 
     if (route.view === 'addPlace') {
@@ -1070,6 +1100,9 @@
     if (event.detail.changed.indexOf('places') !== -1) {
       renderMarkers();
       renderMapEmptyState();
+    }
+    if (event.detail.changed.indexOf('selectedPlaceId') !== -1) {
+      renderMarkers();
     }
   });
   window.addEventListener('hashchange', onHashChange);

@@ -652,6 +652,7 @@
 
   function destroyMap() {
     clearMarkers();
+    bouncedPlaceId = null;
     if (map) {
       map.remove();
       map = null;
@@ -719,6 +720,7 @@
     if (!store.token) {
       return;
     }
+    const isCurrent = beginRequest('places');
     const params = new URLSearchParams();
     if (filter && filter.tags.length > 0) {
       params.set('tags', filter.tags.join(','));
@@ -726,17 +728,11 @@
     }
     const query = params.toString();
     const places = await authedFetch('/api/places' + (query ? '?' + query : ''));
+    if (!isCurrent()) {
+      return;
+    }
     setState({ places });
   }
-
-
-
-
-
-
-
-
-
 
   const addPlaceForm = document.getElementById('addPlaceForm');
   const addPlaceName = document.getElementById('addPlaceName');
@@ -774,6 +770,18 @@
     }
   });
 
+  const requestTickets = new Map();
+
+  function beginRequest(name) {
+    const ticket = (requestTickets.get(name) || 0) + 1;
+    requestTickets.set(name, ticket);
+    return () => requestTickets.get(name) === ticket;
+  }
+
+  function invalidateRequest(name) {
+    requestTickets.set(name, (requestTickets.get(name) || 0) + 1);
+  }
+
   function placeUrl(placeId, suffix) {
     return '/api/places/' + encodeURIComponent(placeId) + (suffix || '');
   }
@@ -807,23 +815,21 @@
     }
   }
 
-  let placeBeingLoaded = null;
-
   async function loadPlace(placeId) {
     clearPlaceView();
-    placeBeingLoaded = placeId;
+    const isCurrent = beginRequest('place');
 
     try {
       const [place, tags] = await Promise.all([
         authedFetch(placeUrl(placeId)),
         authedFetch(placeUrl(placeId, '/tags'))
       ]);
-      if (placeBeingLoaded !== placeId) {
+      if (!isCurrent()) {
         return;
       }
       renderPlaceView(place, tags);
     } catch (error) {
-      if (placeBeingLoaded !== placeId) {
+      if (!isCurrent()) {
         return;
       }
       showToast(error.message, 'error');
@@ -923,11 +929,17 @@
   }
 
   async function loadEditPlaceTags(resetFields) {
+    const placeId = editPlaceId;
+    const isCurrent = beginRequest('editPlace');
     const [place, assigned, all] = await Promise.all([
-      authedFetch(placeUrl(editPlaceId)),
-      authedFetch(placeUrl(editPlaceId, '/tags')),
+      authedFetch(placeUrl(placeId)),
+      authedFetch(placeUrl(placeId, '/tags')),
       authedFetch('/api/tags/counts')
     ]);
+
+    if (!isCurrent()) {
+      return;
+    }
 
     editPlacePrimaryTagId = place.primary_tag_id;
     editPlaceAssigned = assigned;
@@ -1084,7 +1096,11 @@
     tagRowsList.replaceChildren();
     tagsEmpty.hidden = true;
 
+    const isCurrent = beginRequest('tagRows');
     const tags = await authedFetch('/api/tags/counts');
+    if (!isCurrent()) {
+      return;
+    }
     setState({ tags });
     const template = document.getElementById('tagRowTemplate');
     for (const tag of tags) {
@@ -1414,13 +1430,14 @@
     if (route.view === 'place') {
       loadPlace(route.params.placeId);
     } else {
-      placeBeingLoaded = null;
+      invalidateRequest('place');
     }
 
     if (route.view === 'editPlace') {
       loadEditPlace(route.params.placeId);
     } else {
       editPlaceId = null;
+      invalidateRequest('editPlace');
     }
 
     if (route.view === 'profile') {

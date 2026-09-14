@@ -69,7 +69,17 @@
       return await apiFetch(url, Object.assign({}, opts, { headers }));
     } catch (error) {
       if (error.status === 401) {
-        setState({ token: null, pendingEmail: null, places: [], tags: [], filter: [] });
+        destroyMap();
+        clearSignedInViews();
+        setState({
+          token: null,
+          pendingEmail: null,
+          pendingLocation: null,
+          selectedPlaceId: null,
+          places: [],
+          tags: [],
+          filter: { tags: [], match: 'any' }
+        });
         showToast('Your session has ended. Please sign in again.', 'error');
         go('#/login');
       }
@@ -168,7 +178,7 @@
   const mapMenuZone = document.getElementById('mapMenuZone');
   let firstRender = true;
 
-  const conditionalSurfaces = ['viewMapEmpty'];
+  const conditionalSurfaces = ['viewMapEmpty', 'tagsEmpty'];
 
   function hideAll() {
     for (const view of Object.values(views)) {
@@ -542,6 +552,7 @@
 
   document.getElementById('logoutButton').addEventListener('click', () => {
     destroyMap();
+    clearSignedInViews();
     setState({
       token: null,
       pendingEmail: null,
@@ -897,7 +908,7 @@
     const [place, assigned, all] = await Promise.all([
       authedFetch(placeUrl(editPlaceId)),
       authedFetch(placeUrl(editPlaceId, '/tags')),
-      authedFetch('/api/tags')
+      authedFetch('/api/tags/counts')
     ]);
 
     editPlacePrimaryTagId = place.primary_tag_id;
@@ -1029,6 +1040,225 @@
     }
   });
 
+  const tagRowsList = document.getElementById('tagRows');
+  const tagsEmpty = document.getElementById('tagsEmpty');
+  const editTagForm = document.getElementById('editTagForm');
+  const editTagTitle = document.getElementById('editTagTitle');
+  const editTagName = document.getElementById('editTagName');
+  const editTagEmoji = document.getElementById('editTagEmoji');
+  const editTagColor = document.getElementById('editTagColor');
+  const editTagPreview = document.getElementById('editTagPreview');
+  const editTagPreviewEmoji = document.getElementById('editTagPreviewEmoji');
+  const editTagPreviewLabel = document.getElementById('editTagPreviewLabel');
+  const editTagSave = document.getElementById('editTagSave');
+  const editTagDelete = document.getElementById('editTagDelete');
+
+  const NEW_TAG = 'new';
+
+  let editTagId = null;
+  let editTagSaved = { name: '', emoji: '', color: '' };
+
+  function tagUrl(tagId) {
+    return '/api/tags/' + encodeURIComponent(tagId);
+  }
+
+  async function renderTagRows() {
+    tagRowsList.replaceChildren();
+    tagsEmpty.hidden = true;
+
+    const tags = await authedFetch('/api/tags/counts');
+    setState({ tags });
+    const template = document.getElementById('tagRowTemplate');
+    for (const tag of tags) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
+
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
+      }
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      item.querySelector('.tag-row__count').textContent = tag.assignment_count;
+      item.querySelector('.tag-row').setAttribute('href', '#/tags/' + tag.id);
+      tagRowsList.appendChild(item);
+    }
+
+    tagsEmpty.hidden = tags.length > 0;
+  }
+
+  function graphemeCount(value) {
+    if (typeof Intl.Segmenter !== 'function') {
+      return value.length === 0 ? 0 : 1;
+    }
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    return [...segmenter.segment(value)].length;
+  }
+
+  function isEditTagDirty() {
+    return editTagId !== null && (
+      editTagName.value.trim() !== editTagSaved.name ||
+      editTagEmoji.value.trim() !== editTagSaved.emoji ||
+      editTagColor.value !== editTagSaved.color
+    );
+  }
+
+  registerGuard('editTag', isEditTagDirty);
+
+  function renderTagPreview() {
+    const color = editTagColor.value;
+    if (/^#[0-9a-f]{6}$/i.test(color)) {
+      editTagPreview.style.background = color;
+    }
+    editTagPreviewEmoji.textContent = editTagEmoji.value.trim();
+    editTagPreviewLabel.textContent = editTagName.value.trim();
+
+    const emoji = editTagEmoji.value.trim();
+    const emojiOk = emoji === '' || graphemeCount(emoji) === 1;
+    editTagSave.disabled = editTagName.value.trim() === '' || !emojiOk;
+  }
+
+  editTagName.addEventListener('input', renderTagPreview);
+  editTagEmoji.addEventListener('input', renderTagPreview);
+  editTagColor.addEventListener('input', renderTagPreview);
+
+  function tagDefaultColor() {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue('--tag-color-default')
+      .trim();
+  }
+
+  function clearEditTagFields() {
+    editTagName.value = '';
+    editTagEmoji.value = '';
+    editTagColor.value = tagDefaultColor();
+    editTagSaved = { name: '', emoji: '', color: editTagColor.value };
+    renderTagPreview();
+  }
+
+  async function loadEditTag(tagId) {
+    editTagId = tagId;
+    clearEditTagFields();
+    const isNew = tagId === NEW_TAG;
+
+    editTagTitle.textContent = isNew ? 'Add a tag' : 'Edit tag';
+    editTagDelete.hidden = isNew;
+    editTagSave.textContent = isNew ? 'Add tag' : 'Save tag';
+
+    if (isNew) {
+      return;
+    }
+
+    try {
+      const tags = await authedFetch('/api/tags/counts');
+      if (editTagId !== tagId) {
+        return;
+      }
+      setState({ tags });
+
+      const tag = tags.find((candidate) => candidate.id === tagId);
+      if (!tag) {
+        showToast('Not found.', 'error');
+        go('#/tags');
+        return;
+      }
+
+      editTagName.value = tag.name;
+      editTagEmoji.value = tag.emoji || '';
+      editTagColor.value = tag.color;
+      editTagSaved = {
+        name: editTagName.value.trim(),
+        emoji: editTagEmoji.value.trim(),
+        color: editTagColor.value
+      };
+      renderTagPreview();
+    } catch (error) {
+      if (editTagId !== tagId) {
+        return;
+      }
+      showToast(error.message, 'error');
+      go('#/tags');
+    }
+  }
+
+  editTagForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const isNew = editTagId === NEW_TAG;
+    const label = isNew ? 'Add tag' : 'Save tag';
+    setBusy(editTagSave, true);
+
+    try {
+      const payload = {
+        name: editTagName.value.trim(),
+        emoji: editTagEmoji.value.trim(),
+        color: editTagColor.value
+      };
+      if (isNew) {
+        await authedSendJSON('/api/tags', 'POST', payload);
+      } else {
+        await authedSendJSON(tagUrl(editTagId), 'PUT', payload);
+      }
+
+      editTagSaved = { name: payload.name, emoji: payload.emoji, color: payload.color };
+
+      await fetchPlaces(store.filter);
+      showToast(isNew ? 'Tag added.' : 'Tag saved.');
+      go('#/tags');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editTagSave, false, label);
+      renderTagPreview();
+    }
+  });
+
+  async function deleteCurrentTag() {
+    const tagId = editTagId;
+    setBusy(editTagSave, true);
+    editTagDelete.disabled = true;
+
+    try {
+      await authedFetch(tagUrl(tagId), { method: 'DELETE' });
+
+      editTagId = null;
+      await fetchPlaces(store.filter);
+      showToast('Tag deleted.');
+      go('#/tags');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editTagSave, false, 'Save tag');
+      editTagDelete.disabled = false;
+    }
+  }
+
+  editTagDelete.addEventListener('click', () => {
+    const name = editTagName.value.trim() || 'This tag';
+    const tag = store.tags.find((candidate) => candidate.id === editTagId);
+    const count = tag && typeof tag.assignment_count === 'number' ? tag.assignment_count : null;
+    const scope = count === null
+      ? ' will be removed from every place that uses it.'
+      : ' will be removed from ' + count + (count === 1 ? ' place.' : ' places.');
+
+    confirmAction({
+      title: 'Delete this tag?',
+      text: name + scope + ' This cannot be undone.',
+      accept: 'Delete',
+      onConfirm: deleteCurrentTag
+    });
+  });
+
+  function clearSignedInViews() {
+    clearPlaceView();
+    clearEditTagFields();
+    editPlaceName.value = '';
+    editPlaceNote.value = '';
+    assignedTagsList.replaceChildren();
+    allTagsList.replaceChildren();
+    addPlaceForm.reset();
+    tagRowsList.replaceChildren();
+    tagsEmpty.hidden = true;
+  }
+
   function onRouteEntered(route) {
     if (route.view === 'login') {
       loginForm.reset();
@@ -1055,6 +1285,16 @@
       loadEditPlace(route.params.placeId);
     } else {
       editPlaceId = null;
+    }
+
+    if (route.view === 'tags') {
+      renderTagRows().catch((error) => showToast(error.message, 'error'));
+    }
+
+    if (route.view === 'editTag') {
+      loadEditTag(route.params.tagId);
+    } else {
+      editTagId = null;
     }
 
     const viewedPlaceId = (route.view === 'place' || route.view === 'editPlace')

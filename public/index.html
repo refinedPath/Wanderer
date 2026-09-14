@@ -215,6 +215,10 @@
             </a>
           </div>
           <ul class="tag-rows" id="tagRows"></ul>
+          <div class="empty" id="tagsEmpty" hidden>
+            <p class="empty__title">No tags yet</p>
+            <p class="empty__text">Tags color your places and drive the filters on the map.</p>
+          </div>
         </div>
       </div>
       <div class="sheet__footer">
@@ -492,6 +496,26 @@
         <span class="marker__pin"><span class="marker__emoji"></span></span>
       </button>
     </div>
+  </template>
+
+  <template id="tagRowTemplate">
+    <li>
+      <a class="tag-row">
+        <span class="chip">
+          <span class="chip__emoji" aria-hidden="true"></span>
+          <span class="chip__label"></span>
+        </span>
+        <span class="tag-row__meta">
+          <span class="tag-row__count"></span>
+          <span class="tag-row__chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </svg>
+          </span>
+        </span>
+      </a>
+    </li>
   </template>
 
   <template id="editChipTemplate">

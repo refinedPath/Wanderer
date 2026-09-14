@@ -697,6 +697,15 @@
 
   function renderMapEmptyState() {
     const empty = document.getElementById('viewMapEmpty');
+    const isFiltered = store.filter.tags.length > 0;
+
+    document.getElementById('mapEmptyTitle').textContent =
+      isFiltered ? 'Nothing matches' : 'No places yet';
+    document.getElementById('mapEmptyText').textContent =
+      isFiltered
+        ? 'No place carries the tags you picked. Try removing one.'
+        : 'Add one.';
+
     empty.hidden = !(store.route && store.route.view === 'map' && store.places.length === 0);
   }
 
@@ -1220,7 +1229,13 @@
       await authedFetch(tagUrl(tagId), { method: 'DELETE' });
 
       editTagId = null;
-      await fetchPlaces(store.filter);
+
+      const remaining = store.filter.tags.filter((id) => id !== tagId);
+      if (remaining.length !== store.filter.tags.length) {
+        setState({ filter: { tags: remaining, match: store.filter.match } });
+      } else {
+        await fetchPlaces(store.filter);
+      }
       showToast('Tag deleted.');
       go('#/tags');
     } catch (error) {
@@ -1247,6 +1262,98 @@
     });
   });
 
+  const filterChips = document.getElementById('filterChips');
+
+  async function fetchTags() {
+    const tags = await authedFetch('/api/tags/counts');
+    setState({ tags });
+  }
+
+  function renderFilterChips() {
+    const template = document.getElementById('filterChipTemplate');
+    const selected = new Set(store.filter.tags);
+
+    filterChips.replaceChildren();
+
+    const ordered = [...store.tags].sort((a, b) => b.assignment_count - a.assignment_count);
+
+    for (const tag of ordered) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
+
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
+      }
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      item.querySelector('.chip__count').textContent = tag.assignment_count;
+      chip.setAttribute('aria-pressed', selected.has(tag.id) ? 'true' : 'false');
+      chip.addEventListener('click', () => toggleFilterTag(tag.id));
+      filterChips.appendChild(item);
+    }
+  }
+
+  function toggleFilterTag(tagId) {
+    const tags = store.filter.tags.includes(tagId)
+      ? store.filter.tags.filter((id) => id !== tagId)
+      : [...store.filter.tags, tagId];
+    setState({ filter: { tags, match: store.filter.match } });
+  }
+
+  const DRAG_THRESHOLD = 5;
+  let dragging = false;
+  let dragMoved = false;
+  let dragStartX = 0;
+  let dragStartScroll = 0;
+
+  filterChips.addEventListener('pointerdown', (event) => {
+    if (event.pointerType !== 'mouse') {
+      return;
+    }
+    dragging = true;
+    dragMoved = false;
+    dragStartX = event.clientX;
+    dragStartScroll = filterChips.scrollLeft;
+  });
+
+  filterChips.addEventListener('pointermove', (event) => {
+    if (!dragging) {
+      return;
+    }
+    const delta = event.clientX - dragStartX;
+    if (!dragMoved) {
+      if (Math.abs(delta) <= DRAG_THRESHOLD) {
+        return;
+      }
+      dragMoved = true;
+      filterChips.setPointerCapture(event.pointerId);
+      filterChips.classList.add('is-dragging');
+    }
+    filterChips.scrollLeft = dragStartScroll - delta;
+  });
+
+  function endFilterDrag(event) {
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    filterChips.classList.remove('is-dragging');
+    if (event.pointerId !== undefined && filterChips.hasPointerCapture(event.pointerId)) {
+      filterChips.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  filterChips.addEventListener('pointerup', endFilterDrag);
+  filterChips.addEventListener('pointercancel', endFilterDrag);
+
+  filterChips.addEventListener('click', (event) => {
+    if (dragMoved) {
+      event.preventDefault();
+      event.stopPropagation();
+      dragMoved = false;
+    }
+  }, true);
+
   function clearSignedInViews() {
     clearPlaceView();
     clearEditTagFields();
@@ -1257,6 +1364,7 @@
     addPlaceForm.reset();
     tagRowsList.replaceChildren();
     tagsEmpty.hidden = true;
+    filterChips.replaceChildren();
   }
 
   function onRouteEntered(route) {
@@ -1328,7 +1436,7 @@
     await loadMe();
     initMap();
     setMapCursor('');
-    await fetchPlaces(store.filter);
+    await Promise.all([fetchPlaces(store.filter), fetchTags()]);
     go('#/map');
   }
 
@@ -1343,6 +1451,13 @@
     }
     if (event.detail.changed.indexOf('selectedPlaceId') !== -1) {
       renderMarkers();
+    }
+    if (event.detail.changed.indexOf('tags') !== -1) {
+      renderFilterChips();
+    }
+    if (event.detail.changed.indexOf('filter') !== -1) {
+      renderFilterChips();
+      fetchPlaces(store.filter).catch((error) => showToast(error.message, 'error'));
     }
   });
   window.addEventListener('hashchange', onHashChange);

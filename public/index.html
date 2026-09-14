@@ -27,7 +27,7 @@
       <div class="sheet__body">
         <div class="empty">
           <p class="empty__title" id="mapEmptyTitle">No places yet</p>
-          <p class="empty__text">Add one.</p>
+          <p class="empty__text" id="mapEmptyText">Add one.</p>
         </div>
       </div>
       <div class="sheet__footer">
@@ -496,6 +496,16 @@
         <span class="marker__pin"><span class="marker__emoji"></span></span>
       </button>
     </div>
+  </template>
+
+  <template id="filterChipTemplate">
+    <li>
+      <button type="button" class="chip chip--count chip--selectable" aria-pressed="false">
+        <span class="chip__emoji" aria-hidden="true"></span>
+        <span class="chip__label"></span>
+        <span class="chip__count"></span>
+      </button>
+    </li>
   </template>
 
   <template id="tagRowTemplate">

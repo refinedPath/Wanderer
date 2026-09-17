@@ -53,7 +53,11 @@
           <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
         </svg>
       </a>
-      <div class="sheet__body sheet__body--flush">
+      <div class="sheet__body sheet__body--flush" id="placeBody">
+        <div class="sheet__loading" hidden>
+          <span class="spinner"></span>
+          <span class="visually-hidden">Loading</span>
+        </div>
         <div class="place">
           <div class="place__main">
             <h2 class="place__title" id="placeTitle" tabindex="-1"></h2>
@@ -130,7 +134,11 @@
           <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
         </svg>
       </a>
-      <div class="sheet__body sheet__body--top-chrome">
+      <div class="sheet__body sheet__body--top-chrome" id="editPlaceBody">
+        <div class="sheet__loading" hidden>
+          <span class="spinner"></span>
+          <span class="visually-hidden">Loading</span>
+        </div>
         <form class="form" id="editPlaceForm">
           <h2 class="form__title" id="editPlaceTitle" tabindex="-1">Edit place</h2>
           <div class="form__fields">
@@ -210,7 +218,11 @@
 
     <!-- Manage tags -->
     <aside class="sheet" id="viewTags" aria-labelledby="tagsTitle" hidden>
-      <div class="sheet__body sheet__body--flush-end">
+      <div class="sheet__body sheet__body--flush-end" id="tagsBody">
+        <div class="sheet__loading" hidden>
+          <span class="spinner"></span>
+          <span class="visually-hidden">Loading</span>
+        </div>
         <div class="tags">
           <div class="sheet__header">
             <h2 class="tags__title" id="tagsTitle" tabindex="-1">Manage tags</h2>
@@ -250,7 +262,11 @@
           <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
         </svg>
       </a>
-      <div class="sheet__body sheet__body--top-chrome">
+      <div class="sheet__body sheet__body--top-chrome" id="editTagBody">
+        <div class="sheet__loading" hidden>
+          <span class="spinner"></span>
+          <span class="visually-hidden">Loading</span>
+        </div>
         <form class="form" id="editTagForm">
           <h2 class="form__title" id="editTagTitle" tabindex="-1">Edit tag</h2>
           <div class="form__fields">
@@ -311,6 +327,10 @@
         </svg>
       </button>
       <ul class="filter-chips" id="filterChips" aria-label="Filter by tag"></ul>
+    </div>
+    <div class="map-loading" id="mapLoading" hidden>
+      <span class="spinner spinner--on-dark"></span>
+      <span class="visually-hidden">Loading places</span>
     </div>
 
     <div class="menu-zone">

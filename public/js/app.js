@@ -12,6 +12,7 @@
   store.pendingLocation = null;
   store.selectedPlaceId = null;
   store.accountEmail = null;
+  store.placesLoaded = false;
   store.splash = 'img/splash.webp';
 
   function setState(patch) {
@@ -80,6 +81,7 @@
           pendingLocation: null,
           selectedPlaceId: null,
           places: [],
+          placesLoaded: false,
           tags: [],
           filter: { tags: [], match: 'any' }
         });
@@ -218,6 +220,9 @@
     const isFullScreen = view.kind === 'screen';
     topBarZone.hidden = isFullScreen;
     mapMenuZone.hidden = isFullScreen;
+    if (isFullScreen) {
+      document.getElementById('mapLoading').hidden = true;
+    }
 
     app.classList.toggle('is-sheet-open', view.kind === 'sheet' && view.scrim === true);
     scrim.hidden = !(view.kind === 'sheet' && view.scrim === true);
@@ -565,6 +570,7 @@
       pendingLocation: null,
       selectedPlaceId: null,
       places: [],
+      placesLoaded: false,
       tags: [],
       filter: { tags: [], match: 'any' }
     });
@@ -742,7 +748,8 @@
         ? 'No place carries the tags you picked. Try removing one.'
         : 'Add one.';
 
-    empty.hidden = !(store.route && store.route.view === 'map' && store.places.length === 0);
+    empty.hidden = !(store.placesLoaded && store.route &&
+      store.route.view === 'map' && store.places.length === 0);
   }
 
   async function fetchPlaces(filter) {
@@ -750,17 +757,30 @@
       return;
     }
     const isCurrent = beginRequest('places');
+    const mapLoading = document.getElementById('mapLoading');
+    const spinnerTimer = window.setTimeout(() => {
+      mapLoading.hidden = false;
+    }, LOADING_DELAY);
     const params = new URLSearchParams();
     if (filter && filter.tags.length > 0) {
       params.set('tags', filter.tags.join(','));
       params.set('match', filter.match);
     }
     const query = params.toString();
-    const places = await authedFetch('/api/places' + (query ? '?' + query : ''));
+    let places;
+    try {
+      places = await authedFetch('/api/places' + (query ? '?' + query : ''));
+    } finally {
+      if (isCurrent()) {
+        window.clearTimeout(spinnerTimer);
+        mapLoading.hidden = true;
+      }
+    }
+
     if (!isCurrent()) {
       return;
     }
-    setState({ places });
+    setState({ places, placesLoaded: true });
   }
 
   const addPlaceForm = document.getElementById('addPlaceForm');
@@ -801,6 +821,30 @@
 
   const requestTickets = new Map();
 
+  const LOADING_DELAY = 200;
+  const loadingTimers = new Map();
+
+  function setSheetLoading(bodyId, loading) {
+    const body = document.getElementById(bodyId);
+    const spinner = body.querySelector('.sheet__loading');
+    window.clearTimeout(loadingTimers.get(bodyId));
+
+    if (!loading) {
+      loadingTimers.delete(bodyId);
+      body.classList.remove('is-loading');
+      body.removeAttribute('aria-busy');
+      spinner.hidden = true;
+      return;
+    }
+
+    body.classList.add('is-loading');
+    body.setAttribute('aria-busy', 'true');
+
+    loadingTimers.set(bodyId, window.setTimeout(() => {
+      spinner.hidden = false;
+    }, LOADING_DELAY));
+  }
+
   function beginRequest(name) {
     const ticket = (requestTickets.get(name) || 0) + 1;
     requestTickets.set(name, ticket);
@@ -819,6 +863,7 @@
     document.getElementById('placeTitle').textContent = '';
     document.getElementById('placeDesc').textContent = '';
     document.getElementById('placeTags').replaceChildren();
+    document.getElementById('placeEditLink').setAttribute('href', '#/map');
   }
 
   function renderPlaceView(place, tags) {
@@ -846,7 +891,10 @@
 
   async function loadPlace(placeId) {
     clearPlaceView();
+    document.getElementById('placeEditLink')
+      .setAttribute('href', '#/place/' + placeId + '/edit');
     const isCurrent = beginRequest('place');
+    setSheetLoading('placeBody', true);
 
     try {
       const [place, tags] = await Promise.all([
@@ -863,6 +911,10 @@
       }
       showToast(error.message, 'error');
       go('#/map');
+    } finally {
+      if (isCurrent()) {
+        setSheetLoading('placeBody', false);
+      }
     }
   }
 
@@ -1037,6 +1089,7 @@
     editPlaceBusy = false;
     editPlaceRefocus = null;
     renderEditPlaceTags();
+    setSheetLoading('editPlaceBody', true);
 
     try {
       await loadEditPlaceTags(true);
@@ -1046,6 +1099,10 @@
       }
       showToast(error.message, 'error');
       go('#/map');
+    } finally {
+      if (editPlaceId === placeId) {
+        setSheetLoading('editPlaceBody', false);
+      }
     }
   }
 
@@ -1126,7 +1183,17 @@
     tagsEmpty.hidden = true;
 
     const isCurrent = beginRequest('tagRows');
-    const tags = await authedFetch('/api/tags/counts');
+    setSheetLoading('tagsBody', true);
+
+    let tags;
+    try {
+      tags = await authedFetch('/api/tags/counts');
+    } finally {
+      if (isCurrent()) {
+        setSheetLoading('tagsBody', false);
+      }
+    }
+
     if (!isCurrent()) {
       return;
     }
@@ -1211,6 +1278,8 @@
       return;
     }
 
+    setSheetLoading('editTagBody', true);
+
     try {
       const tags = await authedFetch('/api/tags/counts');
       if (editTagId !== tagId) {
@@ -1240,6 +1309,10 @@
       }
       showToast(error.message, 'error');
       go('#/tags');
+    } finally {
+      if (editTagId === tagId) {
+        setSheetLoading('editTagBody', false);
+      }
     }
   }
 
@@ -1607,6 +1680,10 @@
     await decodeSplash();
     document.getElementById('boot').hidden = true;
   }
+
+  document.fonts.ready.then(() => {
+    document.documentElement.classList.add('fonts-ready');
+  });
 
   boot();
 

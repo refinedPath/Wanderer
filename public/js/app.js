@@ -1698,16 +1698,4 @@
 
   boot();
 
-  window.wanderer = {
-    store,
-    setState,
-    apiFetch,
-    authedFetch,
-    authedSendJSON,
-    go,
-    registerGuard,
-    confirmAction,
-    showToast
-  };
-
 })();

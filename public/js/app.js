@@ -12,6 +12,7 @@
   store.pendingLocation = null;
   store.selectedPlaceId = null;
   store.accountEmail = null;
+  store.splash = 'img/splash.webp';
 
   function setState(patch) {
     Object.assign(store, patch);
@@ -594,10 +595,38 @@
   const MAP_STYLE = 'https://tiles.openfreemap.org/styles/bright';
   const MAP_CENTER = [-74.0135, 40.7054];
   const MAP_ZOOM = 12;
+  const MAP_READY_TIMEOUT = 5000;
 
   let map = null;
   let markers = [];
   let bouncedPlaceId = null;
+  let mapLibraryLoading = null;
+
+  function loadMapLibrary() {
+    if (window.maplibregl) {
+      return Promise.resolve();
+    }
+    if (!mapLibraryLoading) {
+      mapLibraryLoading = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'vendor/maplibre-gl.js';
+        script.addEventListener('load', () => {
+          if (window.maplibregl) {
+            resolve();
+            return;
+          }
+          mapLibraryLoading = null;
+          reject(new Error('The map could not be loaded. Please try again.'));
+        }, { once: true });
+        script.addEventListener('error', () => {
+          mapLibraryLoading = null;
+          reject(new Error('The map could not be loaded. Please try again.'));
+        }, { once: true });
+        document.head.appendChild(script);
+      });
+    }
+    return mapLibraryLoading;
+  }
 
   function initMap() {
     if (map) {
@@ -1412,6 +1441,10 @@
   }
 
   function onRouteEntered(route) {
+    if (route.view === 'login' || route.view === 'register' || route.view === 'verify') {
+      loadMapLibrary().catch(() => undefined);
+    }
+
     if (route.view === 'login') {
       loginForm.reset();
     }
@@ -1481,11 +1514,25 @@
     }
   }
 
+  function whenMapReady() {
+    if (!map || map.loaded()) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(resolve, MAP_READY_TIMEOUT);
+      map.once('load', () => {
+        window.clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   async function enterApp() {
     await loadMe();
+    await loadMapLibrary();
     initMap();
     setMapCursor('');
-    await Promise.all([fetchPlaces(store.filter), fetchTags()]);
+    await Promise.all([fetchPlaces(store.filter), fetchTags(), whenMapReady()]);
     go('#/map');
   }
 
@@ -1545,12 +1592,20 @@
     return true;
   }
 
+  function decodeSplash() {
+    const image = new Image();
+    image.src = store.splash;
+    return image.decode().catch(() => undefined);
+  }
+
   async function boot() {
     await loadConfig();
     const cameFromEmail = await handleVerifyLink();
     if (!cameFromEmail && store.route.view === 'splash') {
       go(store.token ? '#/map' : '#/login');
     }
+    await decodeSplash();
+    document.getElementById('boot').hidden = true;
   }
 
   boot();

@@ -860,12 +860,22 @@
     }
   }
 
+  function cachedPlace(placeId) {
+    return store.places.find((place) => place.id === placeId) || null;
+  }
+
   async function loadPlace(placeId) {
     clearPlaceView();
     document.getElementById('placeEditLink')
       .setAttribute('href', '#/place/' + placeId + '/edit');
     const isCurrent = beginRequest('place');
-    setSheetLoading('placeBody', true);
+
+    const cached = cachedPlace(placeId);
+    if (cached) {
+      renderPlaceView(cached, []);
+    } else {
+      setSheetLoading('placeBody', true);
+    }
 
     try {
       const [place, tags] = await Promise.all([
@@ -999,8 +1009,12 @@
     setState({ tags: all });
 
     if (resetFields) {
-      editPlaceName.value = place.name;
-      editPlaceNote.value = place.description || '';
+      const untouched = editPlaceName.value.trim() === editPlaceSaved.name &&
+        editPlaceNote.value.trim() === editPlaceSaved.description;
+      if (untouched) {
+        editPlaceName.value = place.name;
+        editPlaceNote.value = place.description || '';
+      }
       editPlaceSaved = { name: place.name, description: place.description || '' };
     }
     renderEditPlaceTags();
@@ -1060,7 +1074,15 @@
     editPlaceBusy = false;
     editPlaceRefocus = null;
     renderEditPlaceTags();
-    setSheetLoading('editPlaceBody', true);
+
+    const cached = cachedPlace(placeId);
+    if (cached) {
+      editPlaceName.value = cached.name;
+      editPlaceNote.value = cached.description || '';
+      editPlaceSaved = { name: cached.name, description: cached.description || '' };
+    } else {
+      setSheetLoading('editPlaceBody', true);
+    }
 
     try {
       await loadEditPlaceTags(true);

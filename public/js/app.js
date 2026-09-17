@@ -1,1120 +1,1701 @@
 'use strict';
 
-(function () {
-  const API_BASE = '/api';
+(() => {
+  const store = new EventTarget();
+  store.token = null;
+  store.config = null;
+  store.places = [];
+  store.tags = [];
+  store.filter = { tags: [], match: 'any' };
+  store.route = null;
+  store.pendingEmail = null;
+  store.pendingLocation = null;
+  store.selectedPlaceId = null;
+  store.accountEmail = null;
+  store.placesLoaded = false;
+  store.splash = 'img/splash.webp';
 
-  const state = { map: null, token: null, addPlaceMode: false, pendingLngLat: null, markers: {}, filter: { tagIds: [], mode: 'any' } };
-
-  const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-  // DOM refs — assigned in init() after the DOM is ready.
-  let appConfig = null;
-  let authView, loginForm, loginEmail, loginPassword, loginError;
-  let loginSection, registerSection, showRegisterLink, showLoginLink;
-  let registerForm, registerEmail, registerPassword, registerPasswordConfirm, registerError, registerSuccess;
-  let passwordRequirements, passwordPolicy = null, autoVerifyNewAccounts = false;
-  let verifySection, verifyMessage, resendForm, resendEmail, resendError, resendSuccess, verifyToLoginLink;
-  let mapContainer, mapCustomControls, addPlaceBtn, logoutBtn;
-  let createPlaceDialog, createPlaceForm, placeName, placeDescription, createPlaceError, cancelCreatePlaceBtn;
-  let editPlaceDialog, editPlaceForm, editPlaceName, editPlaceDescription, editPlaceTagsList, editPlaceAllTagsList, editPlaceError, cancelEditPlaceBtn, deleteEditPlaceBtn, movePlaceBtn;
-  let manageTagsBtn, manageTagsDialog, tagForm, tagFormName, tagFormColor, tagFormEmoji, tagFormError, tagFormCancelBtn, tagFormSubmit, tagManagerList, closeManageTagsBtn;
-  let editPlaceTags = [];
-  let editPlaceAllTags = [];
-  let manageTags = [];
-  let manageTagsDirty = false;
-  let openPopup = null;
-  let filterBtn, filterDialog, filterTagsList, filterClearBtn, filterCancelBtn, filterApplyBtn;
-  let filterTags = [];
-  let filterStagedIds = new Set();
-
-  /**
-   * Create a DOM element with classes, text, attributes, dataset, and children.
-   * @param {string} tag - HTML tag name
-   * @param {Object} [options]
-   * @param {string[]} [options.classes] - CSS classes to add
-   * @param {string} [options.text] - textContent
-   * @param {string} [options.title] - title attribute (tooltip)
-   * @param {Object<string,string>} [options.dataset] - data-* attributes (camelCase keys)
-   * @param {Object<string,string>} [options.attrs] - other attributes (e.g., aria-*)
-   * @param {Element[]} [options.children] - children to append in order
-   * @returns {HTMLElement}
-   */
-  function el(tag, { classes = [], text, title, dataset = {}, attrs = {}, children = [] } = {}) {
-    const node = document.createElement(tag);
-    if (classes.length) node.classList.add(...classes);
-    if (text !== undefined) node.textContent = text;
-    if (title !== undefined) node.title = title;
-    Object.assign(node.dataset, dataset);
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-    children.forEach(child => node.appendChild(child));
-    return node;
+  function setState(patch) {
+    Object.assign(store, patch);
+    store.dispatchEvent(new CustomEvent('change', {
+      detail: { changed: Object.keys(patch) }
+    }));
   }
 
-  function init() {
-    authView = document.getElementById('authView');
-
-    loginForm = document.getElementById('loginForm');
-    loginEmail = document.getElementById('loginEmail');
-    loginPassword = document.getElementById('loginPassword');
-    loginError = document.getElementById('loginError');
-    loginSection = document.getElementById('loginSection');
-    showLoginLink = document.getElementById('showLoginLink');
-
-    registerSection = document.getElementById('registerSection');
-    showRegisterLink = document.getElementById('showRegisterLink');
-    registerForm = document.getElementById('registerForm');
-    registerEmail = document.getElementById('registerEmail');
-    registerPassword = document.getElementById('registerPassword');
-    registerPasswordConfirm = document.getElementById('registerPasswordConfirm');
-    passwordRequirements = document.getElementById('passwordRequirements');
-    registerError = document.getElementById('registerError');
-    registerSuccess = document.getElementById('registerSuccess');
-
-    verifySection = document.getElementById('verifySection');
-    verifyMessage = document.getElementById('verifyMessage');
-    resendForm = document.getElementById('resendForm');
-    resendEmail = document.getElementById('resendEmail');
-    resendError = document.getElementById('resendError');
-    resendSuccess = document.getElementById('resendSuccess');
-    verifyToLoginLink = document.getElementById('verifyToLoginLink');
-
-    mapContainer = document.getElementById('mapContainer');
-    mapCustomControls = document.getElementById('mapCustomControls');
-    addPlaceBtn = document.getElementById('addPlaceBtn');
-
-    createPlaceDialog = document.getElementById('createPlaceDialog');
-    createPlaceForm = document.getElementById('createPlaceForm');
-    placeName = document.getElementById('placeName');
-    placeDescription = document.getElementById('placeDescription');
-    createPlaceError = document.getElementById('createPlaceError');
-    cancelCreatePlaceBtn = document.getElementById('cancelCreatePlaceBtn');
-
-    editPlaceDialog = document.getElementById('editPlaceDialog');
-    editPlaceForm = document.getElementById('editPlaceForm');
-    editPlaceName = document.getElementById('editPlaceName');
-    editPlaceDescription = document.getElementById('editPlaceDescription');
-    editPlaceTagsList = document.getElementById('editPlaceTagsList');
-    editPlaceAllTagsList = document.getElementById('editPlaceAllTagsList');
-    editPlaceError = document.getElementById('editPlaceError');
-    cancelEditPlaceBtn = document.getElementById('cancelEditPlaceBtn');
-    deleteEditPlaceBtn = document.getElementById('deleteEditPlaceBtn');
-    movePlaceBtn = document.getElementById('movePlaceBtn');
-
-    manageTagsBtn = document.getElementById('manageTagsBtn');
-    manageTagsDialog = document.getElementById('manageTagsDialog');
-    tagForm = document.getElementById('tagForm');
-    tagFormName = document.getElementById('tagFormName');
-    tagFormColor = document.getElementById('tagFormColor');
-    tagFormEmoji = document.getElementById('tagFormEmoji');
-    tagFormError = document.getElementById('tagFormError');
-    tagFormCancelBtn = document.getElementById('tagFormCancelBtn');
-    tagFormSubmit = document.getElementById('tagFormSubmit');
-    tagManagerList = document.getElementById('tagManagerList');
-    closeManageTagsBtn = document.getElementById('closeManageTagsBtn');
-
-    filterBtn = document.getElementById('filterBtn');
-    filterDialog = document.getElementById('filterDialog');
-    filterTagsList = document.getElementById('filterTagsList');
-    filterClearBtn = document.getElementById('filterClearBtn');
-    filterCancelBtn = document.getElementById('filterCancelBtn');
-    filterApplyBtn = document.getElementById('filterApplyBtn');
-
-    logoutBtn = document.getElementById('logoutBtn');
-
-    loginForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      loginError.textContent = '';
-
-      const payload = {
-        email: loginEmail.value,
-        password: loginPassword.value,
-      };
-
-      try {
-        state.token = await login(payload);
-        appConfig = await fetchConfig();
-
-        authView.hidden = true;
-        mapContainer.hidden = false;
-        mapCustomControls.hidden = false;
-
-        if (state.map === null) {
-          state.map = new maplibregl.Map({
-            style: 'https://tiles.openfreemap.org/styles/bright',
-            center: [-74.0135, 40.7054],
-            zoom: 12,
-            container: 'mapContainer',
-          });
-
-          state.map.on('click', (e) => {
-            if (state.addPlaceMode === true) {
-              state.pendingLngLat = e.lngLat;
-              createPlaceDialog.showModal();
-              disarmAddPlaceMode();
-            }
-          });
-        }
-
-        const places = await fetchPlaces();
-        for (const place of places) {
-          addPlaceMarker(place);
-        }
-      } catch (err) {
-        loginError.textContent = err.message;
-        console.error(err);
+  function messageFrom(body) {
+    if (!body) {
+      return null;
+    }
+    if (typeof body.error === 'string') {
+      return body.error;
+    }
+    if (body.errors && typeof body.errors === 'object') {
+      const messages = Object.values(body.errors);
+      if (messages.length > 0) {
+        return messages.join(' ');
       }
+    }
+    return null;
+  }
+
+  async function apiFetch(url, options) {
+    const response = await fetch(url, options);
+
+    if (response.status === 204) {
+      return null;
+    }
+
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      const error = new Error(messageFrom(body) || 'Request failed (' + response.status + ')');
+      error.status = response.status;
+      error.body = body;
+      throw error;
+    }
+
+    return body;
+  }
+
+  async function authedFetch(url, options) {
+    const opts = options || {};
+    const headers = Object.assign({}, opts.headers, {
+      Authorization: 'Bearer ' + store.token
     });
 
-    registerPassword.addEventListener('input', renderPasswordRequirements);
+    try {
+      return await apiFetch(url, Object.assign({}, opts, { headers }));
+    } catch (error) {
+      if (error.status === 401) {
+        showToast('Your session has ended. Please sign in again.', 'error');
+        endSession();
+      }
+      throw error;
+    }
+  }
 
-    registerForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      registerError.textContent = '';
-      registerSuccess.hidden = true;
+  function authedSendJSON(url, method, body) {
+    return authedFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
 
-      if (registerPassword.value !== registerPasswordConfirm.value) {
-        registerError.textContent = 'Passwords do not match.';
+  function setBusy(button, busy, label) {
+    button.disabled = busy;
+    if (!busy) {
+      button.classList.remove('is-loading');
+      button.removeAttribute('aria-busy');
+      button.textContent = label;
+      return;
+    }
+
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    const announcement = document.createElement('span');
+    announcement.className = 'visually-hidden';
+    announcement.textContent = 'Working';
+    button.replaceChildren(spinner, announcement);
+  }
+
+  const views = {
+    splash: { id: 'viewSplash', kind: 'screen' },
+    login: { id: 'viewLogin', kind: 'screen' },
+    register: { id: 'viewRegister', kind: 'screen' },
+    verify: { id: 'viewVerify', kind: 'screen' },
+    photos: {
+      id: 'viewPhotos', kind: 'screen',
+      back: (p) => '#/place/' + p.placeId
+    },
+    map: { id: null, kind: 'map' },
+    place: { id: 'viewPlace', kind: 'sheet', scrim: true },
+    addPrompt: { id: 'viewAddPrompt', kind: 'sheet', scrim: false },
+    addPlace: { id: 'viewAddPlace', kind: 'sheet', scrim: true },
+    editPlace: {
+      id: 'viewEditPlace', kind: 'sheet', scrim: true,
+      back: (p) => '#/place/' + p.placeId
+    },
+    profile: { id: 'viewProfile', kind: 'sheet', scrim: true },
+    tags: { id: 'viewTags', kind: 'sheet', scrim: true },
+    editTag: {
+      id: 'viewEditTag', kind: 'sheet', scrim: true,
+      back: () => '#/tags'
+    },
+    account: { id: 'viewAccountMenu', kind: 'panel' }
+  };
+
+  const routes = [
+    { pattern: /^#\/?$/, view: 'splash', keys: [] },
+    { pattern: /^#\/login$/, view: 'login', keys: [] },
+    { pattern: /^#\/register$/, view: 'register', keys: [] },
+    { pattern: /^#\/verify$/, view: 'verify', keys: [] },
+    { pattern: /^#\/map$/, view: 'map', keys: [] },
+    { pattern: /^#\/add$/, view: 'addPrompt', keys: [] },
+    { pattern: /^#\/add\/form$/, view: 'addPlace', keys: [] },
+    { pattern: /^#\/place\/([^/]+)\/edit$/, view: 'editPlace', keys: ['placeId'] },
+    { pattern: /^#\/place\/([^/]+)\/photos$/, view: 'photos', keys: ['placeId'] },
+    { pattern: /^#\/place\/([^/]+)$/, view: 'place', keys: ['placeId'] },
+    { pattern: /^#\/tags\/([^/]+)$/, view: 'editTag', keys: ['tagId'] },
+    { pattern: /^#\/tags$/, view: 'tags', keys: [] },
+    { pattern: /^#\/profile$/, view: 'profile', keys: [] },
+    { pattern: /^#\/account$/, view: 'account', keys: [] }
+  ];
+
+  function parse(hash) {
+    for (const route of routes) {
+      const match = hash.match(route.pattern);
+      if (match) {
+        const params = Object.fromEntries(
+          route.keys.map((key, index) => [key, match[index + 1]])
+        );
+        return { view: route.view, params };
+      }
+    }
+    return null;
+  }
+
+  const app = document.getElementById('app');
+  const scrim = document.getElementById('scrim');
+  const avatarButton = document.getElementById('avatarButton');
+  const topBarZone = document.getElementById('topBarZone');
+  const mapMenuZone = document.getElementById('mapMenuZone');
+  let firstRender = true;
+
+  const conditionalSurfaces = ['viewMapEmpty', 'tagsEmpty'];
+
+  function hideAll() {
+    for (const view of Object.values(views)) {
+      if (view.id) {
+        const node = document.getElementById(view.id);
+        if (node) {
+          node.hidden = true;
+        }
+      }
+    }
+    for (const id of conditionalSurfaces) {
+      document.getElementById(id).hidden = true;
+    }
+  }
+
+  function focusView(node) {
+    if (firstRender || !node) {
+      return;
+    }
+    const target = node.querySelector('[tabindex="-1"]') || node;
+    if (!target.hasAttribute('tabindex')) {
+      target.setAttribute('tabindex', '-1');
+    }
+    target.focus();
+  }
+
+  function render() {
+    const route = store.route;
+    const view = views[route.view];
+    const node = view.id ? document.getElementById(view.id) : null;
+
+    hideAll();
+
+    const isFullScreen = view.kind === 'screen';
+    topBarZone.hidden = isFullScreen;
+    mapMenuZone.hidden = isFullScreen;
+    if (isFullScreen) {
+      document.getElementById('mapLoading').hidden = true;
+    }
+
+    app.classList.toggle('is-sheet-open', view.kind === 'sheet' && view.scrim === true);
+    scrim.hidden = !(view.kind === 'sheet' && view.scrim === true);
+    avatarButton.setAttribute('aria-expanded', view.kind === 'panel' ? 'true' : 'false');
+
+    if (node) {
+      node.hidden = false;
+      const back = node.querySelector('[data-back]');
+      if (back && view.back) {
+        back.setAttribute('href', view.back(route.params));
+      }
+    }
+
+    onRouteEntered(route);
+    focusView(node);
+    firstRender = false;
+  }
+
+  const PUBLIC_VIEWS = ['splash', 'login', 'register', 'verify'];
+
+  function onHashChange() {
+    const route = parse(window.location.hash || '#/');
+    if (!route) {
+      window.location.replace('#/map');
+      return;
+    }
+    if (!store.token && !PUBLIC_VIEWS.includes(route.view)) {
+      window.location.replace('#/login');
+      return;
+    }
+    setState({ route });
+  }
+
+  function go(hash) {
+    window.location.hash = hash;
+  }
+
+  function openDialog(dialog) {
+    dialog.returnValue = '';
+    dialog.showModal();
+  }
+
+  const guards = {};
+  const leaveDialog = document.getElementById('leaveDialog');
+  let pendingHash = null;
+
+  function registerGuard(viewName, isDirty) {
+    guards[viewName] = isDirty;
+  }
+
+  function currentlyDirty() {
+    const name = store.route && store.route.view;
+    return Boolean(name && guards[name] && guards[name]());
+  }
+
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('a[href^="#/"]');
+    if (!link || !currentlyDirty()) {
+      return;
+    }
+    event.preventDefault();
+    pendingHash = link.getAttribute('href');
+    openDialog(leaveDialog);
+  });
+
+  function navigate(hash) {
+    if (currentlyDirty()) {
+      pendingHash = hash;
+      openDialog(leaveDialog);
+      return;
+    }
+    go(hash);
+  }
+
+  scrim.addEventListener('click', () => {
+    navigate('#/map');
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || document.querySelector('dialog[open]')) {
+      return;
+    }
+    const view = store.route && views[store.route.view];
+    if (!view || view.kind !== 'sheet') {
+      return;
+    }
+    event.preventDefault();
+    navigate('#/map');
+  });
+
+  leaveDialog.addEventListener('close', () => {
+    const target = pendingHash;
+    pendingHash = null;
+    if (leaveDialog.returnValue === 'confirm' && target) {
+      go(target);
+    }
+  });
+
+  const confirmDialog = document.getElementById('confirmDialog');
+  let onConfirm = null;
+
+  function confirmAction(options) {
+    document.getElementById('confirmTitle').textContent = options.title;
+    document.getElementById('confirmText').textContent = options.text || '';
+    document.getElementById('confirmAcceptLabel').textContent = options.accept || 'Delete';
+
+    const subject = document.getElementById('confirmSubject');
+    subject.hidden = !options.subject;
+    if (options.subject) {
+      document.getElementById('confirmSubjectName').textContent = options.subject;
+    }
+
+    onConfirm = options.onConfirm || null;
+    openDialog(confirmDialog);
+  }
+
+  confirmDialog.addEventListener('close', () => {
+    const callback = onConfirm;
+    onConfirm = null;
+    if (confirmDialog.returnValue === 'confirm' && callback) {
+      callback();
+    }
+  });
+
+  function renderPasswordRules(policy) {
+    const list = document.getElementById('passwordRules');
+    const template = document.getElementById('ruleTemplate');
+    const rules = [{ key: 'length', text: 'At least ' + policy.min_length + ' characters' }];
+
+    if (policy.require_number) {
+      rules.push({ key: 'number', text: 'A number' });
+    }
+    if (policy.require_lowercase) {
+      rules.push({ key: 'lowercase', text: 'A lower case letter' });
+    }
+    if (policy.require_uppercase) {
+      rules.push({ key: 'uppercase', text: 'An upper case letter' });
+    }
+    if (policy.require_symbol) {
+      rules.push({ key: 'symbol', text: 'A symbol' });
+    }
+    rules.push({ key: 'match', text: 'Both passwords match' });
+
+    list.replaceChildren();
+    rules.forEach((rule) => {
+      const item = template.content.cloneNode(true);
+      const li = item.querySelector('.rule');
+      li.setAttribute('data-rule', rule.key);
+      li.querySelector('.rule__text').textContent = rule.text;
+      list.appendChild(item);
+    });
+  }
+
+  const toast = document.getElementById('toast');
+  const toastText = document.getElementById('toastText');
+  const toastClose = document.getElementById('toastClose');
+  let toastTimer = null;
+
+  function showToast(message, kind) {
+    const isError = kind === 'error';
+    toastText.textContent = message;
+    toast.setAttribute('role', isError ? 'alert' : 'status');
+    toastClose.hidden = !isError;
+    toast.hidden = false;
+
+    window.clearTimeout(toastTimer);
+    if (!isError) {
+      toastTimer = window.setTimeout(() => {
+        toast.hidden = true;
+      }, 4000);
+    }
+  }
+
+  toastClose.addEventListener('click', () => {
+    toast.hidden = true;
+  });
+
+  async function loadMe() {
+    const me = await authedFetch('/api/config/me');
+    setState({ config: me });
+    if (/^#[0-9a-f]{6}$/i.test(me.tag.default_color)) {
+      document.documentElement.style.setProperty('--tag-color-default', me.tag.default_color);
+    }
+  }
+
+  const loginForm = document.getElementById('loginForm');
+  const loginSubmit = document.getElementById('loginSubmit');
+
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(loginSubmit, true);
+
+    const email = document.getElementById('loginEmail').value.trim();
+
+    try {
+      const result = await apiFetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password: document.getElementById('loginPassword').value
+        })
+      });
+      setState({ token: result.token, accountEmail: email });
+      await enterApp();
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(loginSubmit, false, 'Sign in');
+    }
+  });
+
+  const registerForm = document.getElementById('registerForm');
+  const registerEmail = document.getElementById('registerEmail');
+  const registerPassword = document.getElementById('registerPassword');
+  const registerConfirm = document.getElementById('registerConfirm');
+  const registerSubmit = document.getElementById('registerSubmit');
+
+  function checkPasswordRules() {
+    const policy = store.config?.password;
+    if (!policy) {
+      return;
+    }
+
+    const value = registerPassword.value;
+    const met = {
+      length: value.length >= policy.min_length,
+      number: /[0-9]/.test(value),
+      lowercase: /[a-z]/.test(value),
+      uppercase: /[A-Z]/.test(value),
+      symbol: /[^A-Za-z0-9]/.test(value),
+      match: value.length > 0 && value === registerConfirm.value
+    };
+
+    let allMet = true;
+    for (const rule of document.querySelectorAll('#passwordRules .rule')) {
+      const passed = met[rule.dataset.rule];
+      rule.dataset.met = passed ? 'true' : 'false';
+      rule.querySelector('.rule__state').textContent = passed ? 'met' : 'not met';
+      if (!passed) {
+        allMet = false;
+      }
+    }
+    registerSubmit.disabled = !allMet;
+  }
+
+  registerPassword.addEventListener('input', checkPasswordRules);
+  registerConfirm.addEventListener('input', checkPasswordRules);
+
+  registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(registerSubmit, true);
+    const email = registerEmail.value.trim();
+
+    try {
+      await apiFetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: registerPassword.value })
+      });
+      setState({ pendingEmail: email });
+
+      if (store.config.auto_verify_new_accounts) {
+        showToast('Account created. You can sign in now.');
+        go('#/login');
+      } else {
+        startCooldown();
+        go('#/verify');
+      }
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(registerSubmit, false, 'Create account');
+      checkPasswordRules();
+    }
+  });
+
+  const RESEND_COOLDOWN_SECONDS = 60;
+  const verifyResend = document.getElementById('verifyResend');
+  let cooldownEndsAt = 0;
+  let cooldownTimer = null;
+
+  function tickCooldown() {
+    const secondsLeft = Math.ceil((cooldownEndsAt - Date.now()) / 1000);
+    if (secondsLeft <= 0) {
+      window.clearInterval(cooldownTimer);
+      cooldownTimer = null;
+      verifyResend.disabled = false;
+      verifyResend.textContent = 'Resend email';
+      return;
+    }
+    verifyResend.textContent = 'Resend in ' + secondsLeft + 's';
+  }
+
+  function runCooldown() {
+    verifyResend.disabled = true;
+    window.clearInterval(cooldownTimer);
+    tickCooldown();
+    cooldownTimer = window.setInterval(tickCooldown, 1000);
+  }
+
+  function startCooldown() {
+    cooldownEndsAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+    runCooldown();
+  }
+
+  function resumeCooldown() {
+    if (cooldownEndsAt > Date.now()) {
+      runCooldown();
+      return;
+    }
+    verifyResend.disabled = !store.pendingEmail;
+    verifyResend.textContent = 'Resend email';
+  }
+
+  function stopCooldown() {
+    window.clearInterval(cooldownTimer);
+    cooldownTimer = null;
+  }
+
+  verifyResend.addEventListener('click', async () => {
+    if (!store.pendingEmail) {
+      return;
+    }
+    startCooldown();
+    try {
+      await apiFetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: store.pendingEmail })
+      });
+      showToast('Verification email sent.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+
+  document.getElementById('logoutButton').addEventListener('click', endSession);
+
+  avatarButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    go(store.route && store.route.view === 'account' ? '#/map' : '#/account');
+  });
+
+  document.addEventListener('click', (event) => {
+    if (store.route && store.route.view === 'account' &&
+      !event.target.closest('#viewAccountMenu') &&
+      !event.target.closest('#avatarButton')) {
+      go('#/map');
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && store.route && store.route.view === 'account') {
+      go('#/map');
+      avatarButton.focus();
+    }
+  });
+
+  const MAP_STYLE = 'https://tiles.openfreemap.org/styles/bright';
+  const MAP_CENTER = [-74.0135, 40.7054];
+  const MAP_ZOOM = 12;
+  const MAP_READY_TIMEOUT = 5000;
+
+  let map = null;
+  let markers = [];
+  let bouncedPlaceId = null;
+  let mapLibraryLoading = null;
+
+  function loadMapLibrary() {
+    if (window.maplibregl) {
+      return Promise.resolve();
+    }
+    if (!mapLibraryLoading) {
+      mapLibraryLoading = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'vendor/maplibre-gl.js';
+        script.addEventListener('load', () => {
+          if (window.maplibregl) {
+            resolve();
+            return;
+          }
+          mapLibraryLoading = null;
+          reject(new Error('The map could not be loaded. Please try again.'));
+        }, { once: true });
+        script.addEventListener('error', () => {
+          mapLibraryLoading = null;
+          reject(new Error('The map could not be loaded. Please try again.'));
+        }, { once: true });
+        document.head.appendChild(script);
+      });
+    }
+    return mapLibraryLoading;
+  }
+
+  function initMap() {
+    if (map) {
+      return;
+    }
+    map = new maplibregl.Map({
+      container: 'map',
+      style: MAP_STYLE,
+      center: MAP_CENTER,
+      zoom: MAP_ZOOM
+    });
+
+    let centreAtPressStart = null;
+    map.on('movestart', () => {
+      centreAtPressStart = map.getCenter();
+    });
+
+    map.on('click', (event) => {
+      const centreNow = map.getCenter();
+      const mapMoved = centreAtPressStart !== null &&
+        (centreAtPressStart.lng !== centreNow.lng || centreAtPressStart.lat !== centreNow.lat);
+      centreAtPressStart = null;
+
+      if (!store.route || store.route.view !== 'addPrompt') {
+        if (!mapMoved && store.selectedPlaceId) {
+          setState({ selectedPlaceId: null });
+        }
+        return;
+      }
+      setState({
+        pendingLocation: {
+          latitude: event.lngLat.lat,
+          longitude: event.lngLat.lng
+        }
+      });
+      go('#/add/form');
+    });
+  }
+
+  function setMapCursor(cursor) {
+    if (map) {
+      map.getCanvas().style.cursor = cursor;
+    }
+  }
+
+  function clearMarkers() {
+    for (const marker of markers) {
+      marker.remove();
+    }
+    markers = [];
+  }
+
+  function destroyMap() {
+    clearMarkers();
+    bouncedPlaceId = null;
+    if (map) {
+      map.remove();
+      map = null;
+    }
+  }
+
+  function openPlace(placeId) {
+    go('#/place/' + placeId);
+  }
+
+  function renderMarkers() {
+    if (!map) {
+      return;
+    }
+    clearMarkers();
+
+    const template = document.getElementById('markerTemplate');
+
+    for (const place of store.places) {
+      const element = template.content.cloneNode(true).firstElementChild;
+      const button = element.querySelector('.marker');
+      const emoji = element.querySelector('.marker__emoji');
+
+      if (/^#[0-9a-f]{6}$/i.test(place.primary_color || '')) {
+        button.style.color = place.primary_color;
+      }
+      emoji.textContent = place.primary_emoji || '';
+      button.setAttribute('aria-label', place.name);
+
+      if (place.id === store.selectedPlaceId) {
+        button.classList.add('marker--selected');
+        if (store.selectedPlaceId !== bouncedPlaceId) {
+          button.classList.add('marker--bounce');
+          bouncedPlaceId = store.selectedPlaceId;
+        }
+      }
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openPlace(place.id);
+      });
+
+      markers.push(
+        new maplibregl.Marker({ element })
+          .setLngLat([place.longitude, place.latitude])
+          .addTo(map)
+      );
+    }
+  }
+
+  function renderMapEmptyState() {
+    const empty = document.getElementById('viewMapEmpty');
+    const isFiltered = store.filter.tags.length > 0;
+
+    document.getElementById('mapEmptyTitle').textContent =
+      isFiltered ? 'Nothing matches' : 'No places yet';
+    document.getElementById('mapEmptyText').textContent =
+      isFiltered
+        ? 'No place carries the tags you picked. Try removing one.'
+        : 'Add one.';
+
+    empty.hidden = !(store.placesLoaded && store.route &&
+      store.route.view === 'map' && store.places.length === 0);
+  }
+
+  async function fetchPlaces(filter) {
+    if (!store.token) {
+      return;
+    }
+    const isCurrent = beginRequest('places');
+    const mapLoading = document.getElementById('mapLoading');
+    const spinnerTimer = window.setTimeout(() => {
+      mapLoading.hidden = false;
+    }, LOADING_DELAY);
+    const params = new URLSearchParams();
+    if (filter && filter.tags.length > 0) {
+      params.set('tags', filter.tags.join(','));
+      params.set('match', filter.match);
+    }
+    const query = params.toString();
+    let places;
+    try {
+      places = await authedFetch('/api/places' + (query ? '?' + query : ''));
+    } finally {
+      if (isCurrent()) {
+        window.clearTimeout(spinnerTimer);
+        mapLoading.hidden = true;
+      }
+    }
+
+    if (!isCurrent()) {
+      return;
+    }
+    setState({ places, placesLoaded: true });
+  }
+
+  const addPlaceForm = document.getElementById('addPlaceForm');
+  const addPlaceName = document.getElementById('addPlaceName');
+  const addPlaceNote = document.getElementById('addPlaceNote');
+  const addPlaceSave = document.getElementById('addPlaceSave');
+
+  addPlaceName.addEventListener('input', () => {
+    addPlaceSave.disabled = addPlaceName.value.trim() === '';
+  });
+
+  addPlaceForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!store.pendingLocation) {
+      return;
+    }
+    setBusy(addPlaceSave, true);
+
+    try {
+      const place = await authedSendJSON('/api/places', 'POST', {
+        name: addPlaceName.value.trim(),
+        description: addPlaceNote.value.trim(),
+        latitude: store.pendingLocation.latitude,
+        longitude: store.pendingLocation.longitude
+      });
+
+      await fetchPlaces(store.filter);
+      setState({ pendingLocation: null });
+      showToast('Place saved.');
+      go('#/place/' + place.id);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(addPlaceSave, false, 'Save place');
+      addPlaceSave.disabled = addPlaceName.value.trim() === '';
+    }
+  });
+
+  const requestTickets = new Map();
+
+  const LOADING_DELAY = 200;
+  const loadingTimers = new Map();
+
+  function setSheetLoading(bodyId, loading) {
+    const body = document.getElementById(bodyId);
+    const spinner = body.querySelector('.sheet__loading');
+    window.clearTimeout(loadingTimers.get(bodyId));
+
+    if (!loading) {
+      loadingTimers.delete(bodyId);
+      body.classList.remove('is-loading');
+      body.removeAttribute('aria-busy');
+      spinner.hidden = true;
+      return;
+    }
+
+    body.classList.add('is-loading');
+    body.setAttribute('aria-busy', 'true');
+
+    loadingTimers.set(bodyId, window.setTimeout(() => {
+      spinner.hidden = false;
+    }, LOADING_DELAY));
+  }
+
+  function beginRequest(name) {
+    const ticket = (requestTickets.get(name) || 0) + 1;
+    requestTickets.set(name, ticket);
+    return () => requestTickets.get(name) === ticket;
+  }
+
+  function invalidateRequest(name) {
+    requestTickets.set(name, (requestTickets.get(name) || 0) + 1);
+  }
+
+  function placeUrl(placeId, suffix) {
+    return '/api/places/' + encodeURIComponent(placeId) + (suffix || '');
+  }
+
+  function clearPlaceView() {
+    document.getElementById('placeTitle').textContent = '';
+    document.getElementById('placeDesc').textContent = '';
+    document.getElementById('placeTags').replaceChildren();
+    document.getElementById('placeEditLink').setAttribute('href', '#/map');
+  }
+
+  function renderPlaceView(place, tags) {
+    document.getElementById('placeTitle').textContent = place.name;
+    document.getElementById('placeDesc').textContent = place.description || '';
+    document.getElementById('placeEditLink')
+      .setAttribute('href', '#/place/' + place.id + '/edit');
+
+    const list = document.getElementById('placeTags');
+    const template = document.getElementById('chipTemplate');
+    list.replaceChildren();
+
+    for (const tag of tags) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
+
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
+      }
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      list.appendChild(item);
+    }
+  }
+
+  function cachedPlace(placeId) {
+    return store.places.find((place) => place.id === placeId) || null;
+  }
+
+  async function loadPlace(placeId) {
+    clearPlaceView();
+    document.getElementById('placeEditLink')
+      .setAttribute('href', '#/place/' + placeId + '/edit');
+    const isCurrent = beginRequest('place');
+
+    const cached = cachedPlace(placeId);
+    if (cached) {
+      renderPlaceView(cached, []);
+    } else {
+      setSheetLoading('placeBody', true);
+    }
+
+    try {
+      const [place, tags] = await Promise.all([
+        authedFetch(placeUrl(placeId)),
+        authedFetch(placeUrl(placeId, '/tags'))
+      ]);
+      if (!isCurrent()) {
+        return;
+      }
+      renderPlaceView(place, tags);
+    } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
+      showToast(error.message, 'error');
+      go('#/map');
+    } finally {
+      if (isCurrent()) {
+        setSheetLoading('placeBody', false);
+      }
+    }
+  }
+
+  const editPlaceForm = document.getElementById('editPlaceForm');
+  const editPlaceName = document.getElementById('editPlaceName');
+  const editPlaceNote = document.getElementById('editPlaceNote');
+  const editPlaceSave = document.getElementById('editPlaceSave');
+  const editPlaceDelete = document.getElementById('editPlaceDelete');
+  const assignedTagsList = document.getElementById('assignedTags');
+  const allTagsList = document.getElementById('allTags');
+
+  const MINUS_PATH = 'M6 12h12';
+  const PLUS_PATH = 'M12 6v12M6 12h12';
+
+  let editPlaceId = null;
+  let editPlaceSaved = { name: '', description: '' };
+  let editPlacePrimaryTagId = null;
+  let editPlaceAssigned = [];
+  let editPlaceAll = [];
+  let editPlaceBusy = false;
+  let editPlaceRefocus = null;
+
+  function isEditPlaceDirty() {
+    return editPlaceId !== null && (
+      editPlaceName.value.trim() !== editPlaceSaved.name ||
+      editPlaceNote.value.trim() !== editPlaceSaved.description
+    );
+  }
+
+  registerGuard('editPlace', isEditPlaceDirty);
+
+  function placeTagUrl(tagId) {
+    return placeUrl(editPlaceId, '/tags/' + encodeURIComponent(tagId));
+  }
+
+  function buildEditChip(tag, isAssigned) {
+    const item = document.getElementById('editChipTemplate').content.cloneNode(true);
+    const chip = item.querySelector('.chip');
+    const action = item.querySelector('.chip__action');
+    const star = item.querySelector('.chip__star');
+    const isPrimary = tag.id === editPlacePrimaryTagId;
+
+    if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+      chip.style.background = tag.color;
+    }
+    item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+    item.querySelector('.chip__label').textContent = tag.name;
+
+    action.querySelector('path').setAttribute('d', isAssigned ? MINUS_PATH : PLUS_PATH);
+    action.setAttribute('aria-label', (isAssigned ? 'Unassign ' : 'Assign ') + tag.name);
+    action.disabled = editPlaceBusy;
+    action.dataset.tagId = tag.id;
+    action.dataset.control = 'action';
+    action.addEventListener('click', () => toggleAssigned(tag, isAssigned));
+
+    star.setAttribute('aria-pressed', isPrimary ? 'true' : 'false');
+    star.setAttribute('aria-label',
+      (isPrimary ? 'Clear ' : 'Make ') + tag.name + ' the primary tag');
+    star.disabled = editPlaceBusy;
+    star.dataset.tagId = tag.id;
+    star.dataset.control = 'star';
+    star.addEventListener('click', () => togglePrimary(tag, isPrimary, isAssigned));
+
+    return item;
+  }
+
+  function renderEditPlaceTags() {
+    assignedTagsList.replaceChildren();
+    allTagsList.replaceChildren();
+
+    const assignedIds = new Set(editPlaceAssigned.map((tag) => tag.id));
+
+    for (const tag of editPlaceAssigned) {
+      assignedTagsList.appendChild(buildEditChip(tag, true));
+    }
+    for (const tag of editPlaceAll) {
+      if (!assignedIds.has(tag.id)) {
+        allTagsList.appendChild(buildEditChip(tag, false));
+      }
+    }
+
+    if (editPlaceRefocus && !editPlaceBusy) {
+      const controls = document.querySelectorAll('#assignedTags [data-tag-id], #allTags [data-tag-id]');
+      for (const control of controls) {
+        if (control.dataset.tagId === editPlaceRefocus.tagId &&
+          control.dataset.control === editPlaceRefocus.control) {
+          control.focus();
+          break;
+        }
+      }
+      editPlaceRefocus = null;
+    }
+  }
+
+  async function loadEditPlaceTags(resetFields) {
+    const placeId = editPlaceId;
+    const isCurrent = beginRequest('editPlace');
+    const [place, assigned, all] = await Promise.all([
+      authedFetch(placeUrl(placeId)),
+      authedFetch(placeUrl(placeId, '/tags')),
+      authedFetch('/api/tags/counts')
+    ]);
+
+    if (!isCurrent()) {
+      return;
+    }
+
+    editPlacePrimaryTagId = place.primary_tag_id;
+    editPlaceAssigned = assigned;
+    editPlaceAll = all;
+    setState({ tags: all });
+
+    if (resetFields) {
+      const untouched = editPlaceName.value.trim() === editPlaceSaved.name &&
+        editPlaceNote.value.trim() === editPlaceSaved.description;
+      if (untouched) {
+        editPlaceName.value = place.name;
+        editPlaceNote.value = place.description || '';
+      }
+      editPlaceSaved = { name: place.name, description: place.description || '' };
+    }
+    renderEditPlaceTags();
+  }
+
+  async function runTagAction(work, refocus) {
+    if (editPlaceBusy) {
+      return;
+    }
+    editPlaceBusy = true;
+    editPlaceRefocus = refocus;
+    renderEditPlaceTags();
+
+    try {
+      await work();
+      await loadEditPlaceTags(false);
+      await fetchPlaces(store.filter);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      editPlaceBusy = false;
+      renderEditPlaceTags();
+    }
+  }
+
+  function toggleAssigned(tag, isAssigned) {
+    runTagAction(
+      () => authedFetch(placeTagUrl(tag.id), { method: isAssigned ? 'DELETE' : 'PUT' }),
+      { tagId: tag.id, control: 'action' }
+    );
+  }
+
+  function togglePrimary(tag, isPrimary, isAssigned) {
+    runTagAction(async () => {
+      if (isPrimary) {
+        await authedFetch(placeUrl(editPlaceId, '/primary-tag'), { method: 'DELETE' });
+        return;
+      }
+      if (!isAssigned) {
+        await authedFetch(placeTagUrl(tag.id), { method: 'PUT' });
+      }
+      await authedFetch(
+        placeUrl(editPlaceId, '/primary-tag/' + encodeURIComponent(tag.id)),
+        { method: 'PUT' }
+      );
+    }, { tagId: tag.id, control: 'star' });
+  }
+
+  async function loadEditPlace(placeId) {
+    editPlaceId = placeId;
+    editPlaceName.value = '';
+    editPlaceNote.value = '';
+    editPlaceSaved = { name: '', description: '' };
+    editPlacePrimaryTagId = null;
+    editPlaceAssigned = [];
+    editPlaceAll = [];
+    editPlaceBusy = false;
+    editPlaceRefocus = null;
+    renderEditPlaceTags();
+
+    const cached = cachedPlace(placeId);
+    if (cached) {
+      editPlaceName.value = cached.name;
+      editPlaceNote.value = cached.description || '';
+      editPlaceSaved = { name: cached.name, description: cached.description || '' };
+    } else {
+      setSheetLoading('editPlaceBody', true);
+    }
+
+    try {
+      await loadEditPlaceTags(true);
+    } catch (error) {
+      if (editPlaceId !== placeId) {
+        return;
+      }
+      showToast(error.message, 'error');
+      go('#/map');
+    } finally {
+      if (editPlaceId === placeId) {
+        setSheetLoading('editPlaceBody', false);
+      }
+    }
+  }
+
+  async function deleteCurrentPlace() {
+    const placeId = editPlaceId;
+    setBusy(editPlaceSave, true);
+    editPlaceDelete.disabled = true;
+
+    try {
+      await authedFetch(placeUrl(placeId), { method: 'DELETE' });
+
+      editPlaceId = null;
+      await fetchPlaces(store.filter);
+      showToast('Place deleted.');
+      go('#/map');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editPlaceSave, false, 'Save');
+      editPlaceDelete.disabled = false;
+    }
+  }
+
+  editPlaceDelete.addEventListener('click', () => {
+    const name = editPlaceName.value.trim();
+    confirmAction({
+      title: 'Delete this place?',
+      text: (name || 'This place') + ' will be removed from your map. This cannot be undone.',
+      accept: 'Delete',
+      onConfirm: deleteCurrentPlace
+    });
+  });
+
+  editPlaceForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setBusy(editPlaceSave, true);
+
+    try {
+      const name = editPlaceName.value.trim();
+      const description = editPlaceNote.value.trim();
+      await authedSendJSON(placeUrl(editPlaceId), 'PUT', { name, description });
+
+      editPlaceSaved = { name, description };
+      await fetchPlaces(store.filter);
+      showToast('Place saved.');
+      go('#/place/' + editPlaceId);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editPlaceSave, false, 'Save');
+    }
+  });
+
+  const tagRowsList = document.getElementById('tagRows');
+  const tagsEmpty = document.getElementById('tagsEmpty');
+  const editTagForm = document.getElementById('editTagForm');
+  const editTagTitle = document.getElementById('editTagTitle');
+  const editTagName = document.getElementById('editTagName');
+  const editTagEmoji = document.getElementById('editTagEmoji');
+  const editTagColor = document.getElementById('editTagColor');
+  const editTagPreview = document.getElementById('editTagPreview');
+  const editTagPreviewEmoji = document.getElementById('editTagPreviewEmoji');
+  const editTagPreviewLabel = document.getElementById('editTagPreviewLabel');
+  const editTagSave = document.getElementById('editTagSave');
+  const editTagDelete = document.getElementById('editTagDelete');
+
+  const NEW_TAG = 'new';
+
+  let editTagId = null;
+  let editTagSaved = { name: '', emoji: '', color: '' };
+
+  function tagUrl(tagId) {
+    return '/api/tags/' + encodeURIComponent(tagId);
+  }
+
+  async function renderTagRows() {
+    tagRowsList.replaceChildren();
+    tagsEmpty.hidden = true;
+
+    const isCurrent = beginRequest('tagRows');
+    setSheetLoading('tagsBody', true);
+
+    let tags;
+    try {
+      tags = await authedFetch('/api/tags/counts');
+    } finally {
+      if (isCurrent()) {
+        setSheetLoading('tagsBody', false);
+      }
+    }
+
+    if (!isCurrent()) {
+      return;
+    }
+    setState({ tags });
+    const template = document.getElementById('tagRowTemplate');
+    for (const tag of tags) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
+
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
+      }
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      item.querySelector('.tag-row__count').textContent = tag.assignment_count;
+      item.querySelector('.tag-row').setAttribute('href', '#/tags/' + tag.id);
+      tagRowsList.appendChild(item);
+    }
+
+    tagsEmpty.hidden = tags.length > 0;
+  }
+
+  function graphemeCount(value) {
+    if (typeof Intl.Segmenter !== 'function') {
+      return value.length === 0 ? 0 : 1;
+    }
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    return [...segmenter.segment(value)].length;
+  }
+
+  function isEditTagDirty() {
+    return editTagId !== null && (
+      editTagName.value.trim() !== editTagSaved.name ||
+      editTagEmoji.value.trim() !== editTagSaved.emoji ||
+      editTagColor.value !== editTagSaved.color
+    );
+  }
+
+  registerGuard('editTag', isEditTagDirty);
+
+  function renderTagPreview() {
+    const color = editTagColor.value;
+    if (/^#[0-9a-f]{6}$/i.test(color)) {
+      editTagPreview.style.background = color;
+    }
+    editTagPreviewEmoji.textContent = editTagEmoji.value.trim();
+    editTagPreviewLabel.textContent = editTagName.value.trim();
+
+    const emoji = editTagEmoji.value.trim();
+    const emojiOk = emoji === '' || graphemeCount(emoji) === 1;
+    editTagSave.disabled = editTagName.value.trim() === '' || !emojiOk;
+  }
+
+  editTagName.addEventListener('input', renderTagPreview);
+  editTagEmoji.addEventListener('input', renderTagPreview);
+  editTagColor.addEventListener('input', renderTagPreview);
+
+  function tagDefaultColor() {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue('--tag-color-default')
+      .trim();
+  }
+
+  function clearEditTagFields() {
+    editTagName.value = '';
+    editTagEmoji.value = '';
+    editTagColor.value = tagDefaultColor();
+    editTagSaved = { name: '', emoji: '', color: editTagColor.value };
+    renderTagPreview();
+  }
+
+  async function loadEditTag(tagId) {
+    editTagId = tagId;
+    clearEditTagFields();
+    const isNew = tagId === NEW_TAG;
+
+    editTagTitle.textContent = isNew ? 'Add a tag' : 'Edit tag';
+    editTagDelete.hidden = isNew;
+    editTagSave.textContent = isNew ? 'Add tag' : 'Save tag';
+
+    if (isNew) {
+      return;
+    }
+
+    setSheetLoading('editTagBody', true);
+
+    try {
+      const tags = await authedFetch('/api/tags/counts');
+      if (editTagId !== tagId) {
+        return;
+      }
+      setState({ tags });
+
+      const tag = tags.find((candidate) => candidate.id === tagId);
+      if (!tag) {
+        showToast('Not found.', 'error');
+        go('#/tags');
         return;
       }
 
-      try {
-        const data = await register({
-          email: registerEmail.value,
-          password: registerPassword.value,
-        });
-
-        registerForm.hidden = true;
-        registerSuccess.textContent = autoVerifyNewAccounts
-          ? 'Account created. You can log in now.'
-          : (data.message ?? 'Check your email to verify your account.');
-        registerSuccess.hidden = false;
-      } catch (err) {
-        if (err.status === 422 && err.data?.errors) {
-          const e = err.data.errors;
-          registerError.textContent = [e.email, e.password].filter(Boolean).join(' ');
-        } else {
-          registerError.textContent = err.message;
-        }
-      }
-    });
-
-    showRegisterLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('register');
-    });
-
-    showLoginLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('login');
-    });
-
-    resendForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      resendError.textContent = '';
-      resendSuccess.hidden = true;
-
-      try {
-        const data = await apiFetch(`${API_BASE}/resend-verification`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: resendEmail.value }),
-        });
-        resendSuccess.textContent = data.message ?? 'If that account exists and is unverified, a new verification email has been sent.';
-        resendSuccess.hidden = false;
-      } catch (err) {
-        if (err.status === 422 && err.data?.errors) {
-          resendError.textContent = err.data.errors.email ?? 'A valid email is required.';
-        } else {
-          resendError.textContent = err.message;
-        }
-      }
-    });
-
-    verifyToLoginLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      showAuthSection('login');
-    });
-
-    createPlaceDialog.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      createPlaceError.textContent = '';
-
-      const payload = {
-        name: placeName.value,
-        description: placeDescription.value,
-        latitude: state.pendingLngLat.lat,
-        longitude: state.pendingLngLat.lng,
+      editTagName.value = tag.name;
+      editTagEmoji.value = tag.emoji || '';
+      editTagColor.value = tag.color;
+      editTagSaved = {
+        name: editTagName.value.trim(),
+        emoji: editTagEmoji.value.trim(),
+        color: editTagColor.value
       };
-
-      try {
-        const newPlace = await authedPostJSON(`${API_BASE}/places`, payload);
-        addPlaceMarker(newPlace);
-        createPlaceDialog.close();
-        createPlaceForm.reset();
-      } catch (err) {
-        createPlaceError.textContent = err.message;
-        console.error(err);
+      renderTagPreview();
+    } catch (error) {
+      if (editTagId !== tagId) {
+        return;
       }
-    });
+      showToast(error.message, 'error');
+      go('#/tags');
+    } finally {
+      if (editTagId === tagId) {
+        setSheetLoading('editTagBody', false);
+      }
+    }
+  }
 
-    cancelCreatePlaceBtn.addEventListener('click', () => {
-      createPlaceDialog.close();
-      disarmAddPlaceMode();
-    });
+  editTagForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const isNew = editTagId === NEW_TAG;
+    const label = isNew ? 'Add tag' : 'Save tag';
+    setBusy(editTagSave, true);
 
-    addPlaceBtn.addEventListener('click', () => {
-      if (state.addPlaceMode) {
-        disarmAddPlaceMode();
+    try {
+      const payload = {
+        name: editTagName.value.trim(),
+        emoji: editTagEmoji.value.trim(),
+        color: editTagColor.value
+      };
+      if (isNew) {
+        await authedSendJSON('/api/tags', 'POST', payload);
       } else {
-        armAddPlaceMode();
+        await authedSendJSON(tagUrl(editTagId), 'PUT', payload);
       }
-    });
 
-    editPlaceForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      editPlaceError.textContent = '';
+      editTagSaved = { name: payload.name, emoji: payload.emoji, color: payload.color };
 
-      const placeId = editPlaceDialog.dataset.placeId;
-      const payload = {
-        name: editPlaceName.value,
-        description: editPlaceDescription.value,
-      };
-
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        await refreshPlaceMarker(placeId);
-        editPlaceDialog.close();
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    cancelEditPlaceBtn.addEventListener('click', () => {
-      editPlaceDialog.close();
-    });
-
-    deleteEditPlaceBtn.addEventListener('click', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      if (!confirm('Delete this place? This cannot be undone.')) return;
-
-      editPlaceError.textContent = '';
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}`, {
-          method: 'DELETE',
-        });
-
-        state.markers[placeId]?.remove();
-        delete state.markers[placeId];
-        if (openPopup && openPopup.placeId === placeId) {
-          openPopup = null;
-        }
-        updateFilterIndicator();
-
-        editPlaceDialog.close();
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    movePlaceBtn.addEventListener('click', () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      const marker = state.markers[placeId];
-      if (!marker) return;
-
-      editPlaceDialog.close();
-      marker.setDraggable(true);
-      marker.getElement().style.cursor = 'move';
-    });
-
-    manageTagsBtn.addEventListener('click', () => {
-      openManageTags();
-    });
-
-    closeManageTagsBtn.addEventListener('click', () => {
-      manageTagsDialog.close();
-    });
-
-    manageTagsDialog.addEventListener('close', async () => {
-      if (!manageTagsDirty) return;
-      manageTagsDirty = false;
-      try {
-        await resyncMarkers();
-      } catch (err) {
-        console.error(err);
-      }
-    });
-
-    tagFormCancelBtn.addEventListener('click', () => {
-      resetTagForm();
-    });
-
-    tagForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      tagFormError.textContent = '';
-
-      const editingId = tagForm.dataset.editingId;
-      const payload = {
-        name: tagFormName.value,
-        color: tagFormColor.value,
-        emoji: tagFormEmoji.value,
-      };
-
-      try {
-        if (editingId) {
-          await authedFetch(`${API_BASE}/tags/${editingId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          manageTagsDirty = true;
-        } else {
-          await authedPostJSON(`${API_BASE}/tags`, payload);
-        }
-        manageTags = await fetchTagsWithCounts();
-        renderTagManager();
-        resetTagForm();
-      } catch (err) {
-        tagFormError.textContent = err.message;
-        console.error(err);
-      }
-    });
-
-    filterBtn.addEventListener('click', () => {
-      openFilterDialog();
-    });
-
-    filterApplyBtn.addEventListener('click', () => {
-      applyFilter();
-    });
-
-    filterClearBtn.addEventListener('click', () => {
-      clearFilter();
-    });
-
-    filterCancelBtn.addEventListener('click', () => {
-      filterDialog.close();
-    });
-
-    logoutBtn.addEventListener('click', () => {
-      logout();
-    });
-
-    loadPublicConfig();
-
-    maybeHandleVerification();
-  }
-
-  function armAddPlaceMode() {
-    state.addPlaceMode = true;
-    state.map.getCanvas().style.cursor = 'crosshair';
-    addPlaceBtn.textContent = 'Cancel';
-  }
-
-  function disarmAddPlaceMode() {
-    state.addPlaceMode = false;
-    state.map.getCanvas().style.cursor = '';
-    addPlaceBtn.textContent = 'Add place';
-  }
-
-  async function authedPostJSON(url, obj) {
-    return authedFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(obj),
-    });
-  }
-
-  async function apiFetch(url, options = {}) {
-    const response = await fetch(url, options);
-    if (response.status === 204) return null;
-    const data = await response.json();
-    if (!response.ok) {
-      const err = new Error(data.error ?? `HTTP ${response.status}`);
-      err.status = response.status;
-      err.data = data;
-      throw err;
+      await fetchPlaces(store.filter);
+      showToast(isNew ? 'Tag added.' : 'Tag saved.');
+      go('#/tags');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editTagSave, false, label);
+      renderTagPreview();
     }
-    return data;
-  }
+  });
 
-  async function authedFetch(url, options = {}) {
-    const headers = {};
-    if (options.headers) Object.assign(headers, options.headers);
-    headers['Authorization'] = 'Bearer ' + state.token;
-    try {
-      return await apiFetch(url, { ...options, headers });
-    } catch (err) {
-      if (err.status === 401) {
-        logout('Your session has expired. Please log in again.');
-      }
-      throw err;
-    }
-  }
-
-  function logout(message) {
-    state.token = null;
-
-    for (const id of Object.keys(state.markers)) {
-      state.markers[id].remove();
-    }
-    state.markers = {};
-    openPopup = null;
-    state.filter = { tagIds: [], mode: 'any' };
-    updateFilterIndicator();
-
-    mapContainer.hidden = true;
-    mapCustomControls.hidden = true;
-    authView.hidden = false;
-
-    loginForm.reset();
-    loginError.textContent = message ?? '';
-  }
-
-  function showAuthSection(which) {
-    loginSection.hidden = which !== 'login';
-    registerSection.hidden = which !== 'register';
-    verifySection.hidden = which !== 'verify';
-    loginError.textContent = '';
-    registerError.textContent = '';
-    registerSuccess.hidden = true;
-    registerForm.hidden = false;
-  }
-
-  async function login(payload) {
-    const data = await apiFetch(`${API_BASE}/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    return data.token;
-  }
-
-  async function loadPublicConfig() {
-    try {
-      const config = await apiFetch(`${API_BASE}/config`);
-      passwordPolicy = config.password ?? null;
-      autoVerifyNewAccounts = config.auto_verify_new_accounts ?? false;
-      renderPasswordRequirements();
-    } catch {
-      passwordPolicy = null;
-    }
-  }
-
-  function renderPasswordRequirements() {
-    if (passwordPolicy === null) {
-      passwordRequirements.hidden = true;
-
-      return;
-    }
-
-    const pw = registerPassword.value;
-    const rules = [
-      { label: `At least ${passwordPolicy.min_length} characters`, met: pw.length >= passwordPolicy.min_length, on: true },
-      { label: 'An uppercase letter', met: /\p{Lu}/u.test(pw), on: passwordPolicy.require_uppercase },
-      { label: 'A lowercase letter', met: /\p{Ll}/u.test(pw), on: passwordPolicy.require_lowercase },
-      { label: 'A number', met: /\p{N}/u.test(pw), on: passwordPolicy.require_number },
-      { label: 'A symbol', met: /[^\p{L}\p{N}]/u.test(pw), on: passwordPolicy.require_symbol },
-    ].filter((r) => r.on);
-
-    passwordRequirements.textContent = '';
-    for (const rule of rules) {
-      const li = el('li', { text: rule.label });
-      if (rule.met) li.classList.add('met');
-      passwordRequirements.appendChild(li);
-    }
-    passwordRequirements.hidden = false;
-  }
-
-  async function register(payload) {
-    return apiFetch(`${API_BASE}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async function maybeHandleVerification() {
-    const token = new URLSearchParams(location.search).get('verify');
-    if (!token) return;
-
-    history.replaceState(null, '', location.pathname);
-
-    showAuthSection('verify');
-    verifyMessage.textContent = 'Verifying…';
-    resendForm.hidden = true;
+  async function deleteCurrentTag() {
+    const tagId = editTagId;
+    setBusy(editTagSave, true);
+    editTagDelete.disabled = true;
 
     try {
-      const data = await apiFetch(`${API_BASE}/verify-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      });
-      verifyMessage.textContent = data.message ?? 'Email verified. You can now log in.';
-    } catch (err) {
-      if (err.status === 410) {
-        verifyMessage.textContent = 'This verification link has expired. Request a new one below.';
-        resendForm.hidden = false;
-      } else if (err.status === 400) {
-        verifyMessage.textContent = 'This verification link is invalid. Request a new one below.';
-        resendForm.hidden = false;
+      await authedFetch(tagUrl(tagId), { method: 'DELETE' });
+
+      editTagId = null;
+
+      const remaining = store.filter.tags.filter((id) => id !== tagId);
+      if (remaining.length !== store.filter.tags.length) {
+        setState({ filter: { tags: remaining, match: store.filter.match } });
       } else {
-        verifyMessage.textContent = err.message;
+        await fetchPlaces(store.filter);
       }
+      showToast('Tag deleted.');
+      go('#/tags');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(editTagSave, false, 'Save tag');
+      editTagDelete.disabled = false;
     }
   }
 
-  async function fetchPlaces() {
-    const { tagIds, mode } = state.filter;
-    if (tagIds.length === 0) {
-      return authedFetch(`${API_BASE}/places`);
-    }
-    const query = new URLSearchParams({ tags: tagIds.join(','), match: mode });
-    return authedFetch(`${API_BASE}/places?${query.toString()}`);
-  }
+  editTagDelete.addEventListener('click', () => {
+    const name = editTagName.value.trim() || 'This tag';
+    const tag = store.tags.find((candidate) => candidate.id === editTagId);
+    const count = tag && typeof tag.assignment_count === 'number' ? tag.assignment_count : null;
+    const scope = count === null
+      ? ' will be removed from every place that uses it.'
+      : ' will be removed from ' + count + (count === 1 ? ' place.' : ' places.');
 
-  async function fetchPlace(placeId) {
-    return authedFetch(`${API_BASE}/places/${placeId}`);
-  }
+    confirmAction({
+      title: 'Delete this tag?',
+      text: name + scope + ' This cannot be undone.',
+      accept: 'Delete',
+      onConfirm: deleteCurrentTag
+    });
+  });
 
-  async function fetchPlaceTags(placeId) {
-    return authedFetch(`${API_BASE}/places/${placeId}/tags`);
-  }
+  const filterChips = document.getElementById('filterChips');
 
   async function fetchTags() {
-    return authedFetch(`${API_BASE}/tags`);
+    const tags = await authedFetch('/api/tags/counts');
+    setState({ tags });
   }
 
-  async function fetchTagsWithCounts() {
-    return authedFetch(`${API_BASE}/tags/counts`);
-  }
+  function renderFilterChips() {
+    const template = document.getElementById('filterChipTemplate');
+    const selected = new Set(store.filter.tags);
 
-  async function fetchConfig() {
-    return authedFetch(`${API_BASE}/config/me`);
-  }
+    filterChips.replaceChildren();
 
-  function firstGrapheme(str) {
-    if (str === null) return null;
-    const seg = graphemeSegmenter.segment(str.trim());
-    return seg[Symbol.iterator]().next().value?.segment ?? null;
-  }
+    const ordered = [...store.tags].sort((a, b) => b.assignment_count - a.assignment_count);
 
-  async function openEditDialog(place) {
-    editPlaceError.textContent = '';
-    editPlaceName.value = place.name;
-    editPlaceDescription.value = place.description ?? '';
-    editPlaceDialog.dataset.placeId = place.id;
-    editPlaceDialog.dataset.primaryTagId = place.primary_tag_id ?? '';
+    for (const tag of ordered) {
+      const item = template.content.cloneNode(true);
+      const chip = item.querySelector('.chip');
 
-    editPlaceTagsList.textContent = 'Loading tags…';
-    editPlaceDialog.showModal();
-
-    try {
-      const [tags, allTags] = await Promise.all([
-        fetchPlaceTags(place.id),
-        fetchTags(),
-      ]);
-      if (!editPlaceDialog.open) return;
-      editPlaceTags = tags;
-      editPlaceAllTags = allTags;
-      renderTags(editPlaceDialog.dataset.primaryTagId || null);
-    } catch (err) {
-      if (!editPlaceDialog.open) return;
-      editPlaceTagsList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
-  }
-
-  function renderTagChip(tag) {
-    const chip = el('div', {
-      classes: ['place-popup__tag'],
-      title: tag.name,
-      children: [el('span', { classes: ['place-popup__tag-name'], text: tag.name })],
-    });
-    chip.style.backgroundColor = tag.color;
-
-    const emoji = firstGrapheme(tag.emoji);
-    if (emoji !== null) {
-      chip.insertBefore(
-        el('span', { classes: ['place-popup__tag-emoji'], text: emoji }),
-        chip.firstChild,
-      );
-    }
-
-    return chip;
-  }
-
-  function renderEditableTagChip(tag, controls) {
-    const chip = renderTagChip(tag);
-    for (const control of controls) {
-      chip.appendChild(control);
-    }
-    return chip;
-  }
-
-  function tagControlButton(glyph, label, onClick) {
-    const btn = el('button', {
-      classes: ['tag-chip__control'],
-      text: glyph,
-      title: label,
-      attrs: { type: 'button', 'aria-label': label },
-    });
-    btn.addEventListener('click', onClick);
-    return btn;
-  }
-
-  function renderAssignedTagChip(tag, primaryTagId) {
-    const isPrimary = tag.id === primaryTagId;
-
-    const togglePrimary = tagControlButton(
-      isPrimary ? '★' : '☆',
-      isPrimary ? 'Unset primary' : 'Set as primary',
-      async () => {
-        const placeId = editPlaceDialog.dataset.placeId;
-        const currentPrimary = editPlaceDialog.dataset.primaryTagId || null;
-        const makePrimary = tag.id !== currentPrimary;
-
-        try {
-          if (makePrimary) {
-            await authedFetch(`${API_BASE}/places/${placeId}/primary-tag/${tag.id}`, {
-              method: 'PUT',
-            });
-            editPlaceDialog.dataset.primaryTagId = tag.id;
-          } else {
-            await authedFetch(`${API_BASE}/places/${placeId}/primary-tag`, {
-              method: 'DELETE',
-            });
-            editPlaceDialog.dataset.primaryTagId = '';
-          }
-          renderTags(editPlaceDialog.dataset.primaryTagId || null);
-          await refreshPlaceMarker(placeId);
-        } catch (err) {
-          editPlaceError.textContent = err.message;
-          console.error(err);
-        }
-      },
-    );
-
-    const unassignTag = tagControlButton('⊖', 'Unassign tag', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}/tags/${tag.id}`, {
-          method: 'DELETE',
-        });
-        editPlaceTags = editPlaceTags.filter((t) => t.id !== tag.id);
-        const wasPrimary = editPlaceDialog.dataset.primaryTagId === tag.id;
-        if (wasPrimary) {
-          editPlaceDialog.dataset.primaryTagId = '';
-        }
-        renderTags(editPlaceDialog.dataset.primaryTagId || null);
-        if (openPopup && openPopup.placeId === placeId) {
-          renderPopupTags(placeId, openPopup.tagsSlot, openPopup.popup);
-        }
-        await refreshPlaceMarker(placeId);
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
+      if (/^#[0-9a-f]{6}$/i.test(tag.color || '')) {
+        chip.style.background = tag.color;
       }
-    });
-
-    return renderEditableTagChip(tag, [togglePrimary, unassignTag]);
-  }
-
-  function renderUnassignedTagChip(tag) {
-    const assignTag = tagControlButton('⊕', 'Assign tag', async () => {
-      const placeId = editPlaceDialog.dataset.placeId;
-      try {
-        await authedFetch(`${API_BASE}/places/${placeId}/tags/${tag.id}`, {
-          method: 'PUT',
-        });
-        editPlaceTags = [...editPlaceTags, tag];
-        renderTags(editPlaceDialog.dataset.primaryTagId || null);
-        if (openPopup && openPopup.placeId === placeId) {
-          renderPopupTags(placeId, openPopup.tagsSlot, openPopup.popup);
-        }
-        await refreshPlaceMarker(placeId);
-      } catch (err) {
-        editPlaceError.textContent = err.message;
-        console.error(err);
-      }
-    });
-    return renderEditableTagChip(tag, [assignTag]);
-  }
-
-  function renderTags(primaryTagId) {
-    const assignedIds = new Set(editPlaceTags.map((t) => t.id));
-
-    editPlaceTagsList.textContent = '';
-    for (const tag of editPlaceTags) {
-      editPlaceTagsList.appendChild(renderAssignedTagChip(tag, primaryTagId));
-    }
-
-    editPlaceAllTagsList.textContent = '';
-    for (const tag of editPlaceAllTags) {
-      if (assignedIds.has(tag.id)) continue;
-      editPlaceAllTagsList.appendChild(renderUnassignedTagChip(tag));
+      item.querySelector('.chip__emoji').textContent = tag.emoji || '';
+      item.querySelector('.chip__label').textContent = tag.name;
+      item.querySelector('.chip__count').textContent = tag.assignment_count;
+      chip.setAttribute('aria-pressed', selected.has(tag.id) ? 'true' : 'false');
+      chip.addEventListener('click', () => toggleFilterTag(tag.id));
+      filterChips.appendChild(item);
     }
   }
 
-  function resetTagForm() {
-    tagForm.reset();
-    delete tagForm.dataset.editingId;
-    tagFormColor.value = appConfig.tag.default_color;
-    tagFormError.textContent = '';
-    tagFormSubmit.value = 'Add tag';
-    tagFormCancelBtn.hidden = true;
+  function toggleFilterTag(tagId) {
+    const tags = store.filter.tags.includes(tagId)
+      ? store.filter.tags.filter((id) => id !== tagId)
+      : [...store.filter.tags, tagId];
+    setState({ filter: { tags, match: store.filter.match } });
   }
 
-  async function openManageTags() {
-    resetTagForm();
-    manageTagsDirty = false;
-    tagManagerList.textContent = 'Loading tags…';
-    manageTagsDialog.showModal();
+  const DRAG_THRESHOLD = 5;
+  let dragging = false;
+  let dragMoved = false;
+  let dragStartX = 0;
+  let dragStartScroll = 0;
 
-    try {
-      manageTags = await fetchTagsWithCounts();
-      if (!manageTagsDialog.open) return;
-      renderTagManager();
-    } catch (err) {
-      if (!manageTagsDialog.open) return;
-      tagManagerList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
-  }
-
-  function renderTagManager() {
-    tagManagerList.textContent = '';
-
-    if (manageTags.length === 0) {
-      tagManagerList.appendChild(el('p', { classes: ['tag-manager__empty'], text: 'No tags yet.' }));
+  filterChips.addEventListener('pointerdown', (event) => {
+    if (event.pointerType !== 'mouse') {
       return;
     }
+    dragging = true;
+    dragMoved = false;
+    dragStartX = event.clientX;
+    dragStartScroll = filterChips.scrollLeft;
+  });
 
-    for (const tag of manageTags) {
-      tagManagerList.appendChild(renderTagManagerRow(tag));
-    }
-  }
-
-  function renderTagManagerRow(tag) {
-    const chip = renderTagChip(tag);
-
-    const count = el('span', {
-      classes: ['tag-manager__count'],
-      text: `${tag.assignment_count}`,
-      title: `Assigned to ${tag.assignment_count} place${tag.assignment_count === 1 ? '' : 's'}`,
-    });
-
-    const editBtn = tagControlButton('✎', 'Edit tag', () => startEditTag(tag));
-    const deleteBtn = tagControlButton('✕', 'Delete tag', () => deleteTag(tag));
-    deleteBtn.classList.add('tag-manager__delete');
-
-    const row = el('div', {
-      classes: ['tag-manager__row'],
-      children: [chip, count, editBtn, deleteBtn],
-    });
-    if (tag.assignment_count === 0) row.classList.add('tag-manager__row--unused');
-
-    return row;
-  }
-
-  function startEditTag(tag) {
-    tagForm.dataset.editingId = tag.id;
-    tagFormName.value = tag.name;
-    tagFormColor.value = tag.color;
-    tagFormEmoji.value = tag.emoji ?? '';
-    tagFormError.textContent = '';
-    tagFormSubmit.value = 'Save';
-    tagFormCancelBtn.hidden = false;
-    tagFormName.focus();
-  }
-
-  async function deleteTag(tag) {
-    const msg = tag.assignment_count > 0
-      ? `Delete "${tag.name}"? It is assigned to ${tag.assignment_count} place${tag.assignment_count === 1 ? '' : 's'}; those tag assignments will be removed. The place${tag.assignment_count === 1 ? '' : 's'} stay${tag.assignment_count === 1 ? 's' : ''} untouched. This cannot be undone.`
-      : `Delete "${tag.name}"? This cannot be undone.`;
-    if (!confirm(msg)) return;
-
-    tagFormError.textContent = '';
-    try {
-      await authedFetch(`${API_BASE}/tags/${tag.id}`, { method: 'DELETE' });
-      manageTagsDirty = true;
-      if (tagForm.dataset.editingId === tag.id) resetTagForm();
-      manageTags = await fetchTagsWithCounts();
-      renderTagManager();
-    } catch (err) {
-      tagFormError.textContent = err.message;
-      console.error(err);
-    }
-  }
-
-  async function openFilterDialog() {
-    filterStagedIds = new Set(state.filter.tagIds);
-    setFilterModeRadio(state.filter.mode);
-
-    filterTagsList.textContent = 'Loading tags…';
-    filterDialog.showModal();
-
-    try {
-      filterTags = await fetchTags();
-      if (!filterDialog.open) return;
-      renderFilterTags();
-    } catch (err) {
-      if (!filterDialog.open) return;
-      filterTagsList.textContent = 'Could not load tags.';
-      console.error(err);
-    }
-  }
-
-  function setFilterModeRadio(mode) {
-    const input = filterDialog.querySelector(`input[name="filterMode"][value="${mode}"]`);
-    if (input) input.checked = true;
-  }
-
-  function renderFilterTags() {
-    filterTagsList.textContent = '';
-
-    if (filterTags.length === 0) {
-      filterTagsList.appendChild(el('p', { classes: ['tag-manager__empty'], text: 'No tags yet.' }));
+  filterChips.addEventListener('pointermove', (event) => {
+    if (!dragging) {
       return;
     }
-
-    for (const tag of filterTags) {
-      filterTagsList.appendChild(renderFilterTagChip(tag));
-    }
-  }
-
-  function renderFilterTagChip(tag) {
-    const selected = filterStagedIds.has(tag.id);
-    const children = [el('span', { classes: ['place-popup__tag-name'], text: tag.name })];
-
-    const emoji = firstGrapheme(tag.emoji);
-    if (emoji !== null) {
-      children.unshift(el('span', { classes: ['place-popup__tag-emoji'], text: emoji }));
-    }
-
-    const chip = el('button', {
-      classes: ['filter-tag'],
-      title: tag.name,
-      attrs: { type: 'button', 'aria-pressed': selected ? 'true' : 'false' },
-      children,
-    });
-    chip.style.backgroundColor = tag.color;
-
-    chip.addEventListener('click', () => {
-      if (filterStagedIds.has(tag.id)) {
-        filterStagedIds.delete(tag.id);
-        chip.setAttribute('aria-pressed', 'false');
-      } else {
-        filterStagedIds.add(tag.id);
-        chip.setAttribute('aria-pressed', 'true');
+    const delta = event.clientX - dragStartX;
+    if (!dragMoved) {
+      if (Math.abs(delta) <= DRAG_THRESHOLD) {
+        return;
       }
+      dragMoved = true;
+      filterChips.setPointerCapture(event.pointerId);
+      filterChips.classList.add('is-dragging');
+    }
+    filterChips.scrollLeft = dragStartScroll - delta;
+  });
+
+  function endFilterDrag(event) {
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    filterChips.classList.remove('is-dragging');
+    if (event.pointerId !== undefined && filterChips.hasPointerCapture(event.pointerId)) {
+      filterChips.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  filterChips.addEventListener('pointerup', endFilterDrag);
+  filterChips.addEventListener('pointercancel', endFilterDrag);
+
+  filterChips.addEventListener('click', (event) => {
+    if (dragMoved) {
+      event.preventDefault();
+      event.stopPropagation();
+      dragMoved = false;
+    }
+  }, true);
+
+  const profileEmail = document.getElementById('profileEmail');
+  const profileName = document.getElementById('profileName');
+  const profilePhoto = document.getElementById('profilePhoto');
+  const profileSave = document.getElementById('profileSave');
+
+  profileName.disabled = true;
+  profilePhoto.disabled = true;
+  profileSave.disabled = true;
+
+  function renderProfile() {
+    profileEmail.textContent = store.accountEmail || '';
+  }
+
+  function clearProfile() {
+    profileEmail.textContent = '';
+    profileName.value = '';
+  }
+
+  function endSession() {
+    destroyMap();
+    clearSignedInViews();
+    setState({
+      token: null,
+      accountEmail: null,
+      pendingEmail: null,
+      pendingLocation: null,
+      selectedPlaceId: null,
+      places: [],
+      placesLoaded: false,
+      tags: [],
+      filter: { tags: [], match: 'any' }
     });
-
-    return chip;
+    go('#/login');
+    loadConfig();
   }
 
-  function readFilterMode() {
-    const checked = filterDialog.querySelector('input[name="filterMode"]:checked');
-    return checked instanceof HTMLInputElement ? checked.value : 'any';
+  function clearSignedInViews() {
+    clearProfile();
+    clearPlaceView();
+    clearEditTagFields();
+    editPlaceName.value = '';
+    editPlaceNote.value = '';
+    assignedTagsList.replaceChildren();
+    allTagsList.replaceChildren();
+    addPlaceForm.reset();
+    tagRowsList.replaceChildren();
+    tagsEmpty.hidden = true;
+    filterChips.replaceChildren();
   }
 
-  async function applyFilter() {
-    state.filter = {
-      tagIds: [...filterStagedIds],
-      mode: readFilterMode(),
-    };
-    filterDialog.close();
-    try {
-      await resyncMarkers();
-      updateFilterIndicator();
-    } catch (err) {
-      console.error(err);
+  function onRouteEntered(route) {
+    if (route.view === 'login' || route.view === 'register' || route.view === 'verify') {
+      loadMapLibrary().catch(() => undefined);
+    }
+
+    if (route.view === 'login') {
+      loginForm.reset();
+    }
+
+    if (route.view === 'register') {
+      registerForm.reset();
+      checkPasswordRules();
+    }
+
+    if (route.view === 'verify') {
+      resumeCooldown();
+    } else {
+      stopCooldown();
+    }
+
+    if (route.view === 'place') {
+      loadPlace(route.params.placeId);
+    } else {
+      invalidateRequest('place');
+    }
+
+    if (route.view === 'editPlace') {
+      loadEditPlace(route.params.placeId);
+    } else {
+      editPlaceId = null;
+      invalidateRequest('editPlace');
+    }
+
+    if (route.view === 'profile') {
+      renderProfile();
+    }
+
+    if (route.view === 'tags') {
+      renderTagRows().catch((error) => showToast(error.message, 'error'));
+    }
+
+    if (route.view === 'editTag') {
+      loadEditTag(route.params.tagId);
+    } else {
+      editTagId = null;
+    }
+
+    const viewedPlaceId = (route.view === 'place' || route.view === 'editPlace')
+      ? route.params.placeId
+      : null;
+    if (viewedPlaceId && viewedPlaceId !== store.selectedPlaceId) {
+      setState({ selectedPlaceId: viewedPlaceId });
+    }
+
+    setMapCursor(route.view === 'addPrompt' ? 'crosshair' : '');
+
+    if (route.view === 'addPlace') {
+      if (!store.pendingLocation) {
+        go('#/add');
+        return;
+      }
+      addPlaceForm.reset();
+      addPlaceSave.disabled = true;
+    }
+
+    if (route.view !== 'addPrompt' && route.view !== 'addPlace' && store.pendingLocation) {
+      setState({ pendingLocation: null });
+    }
+
+    if (route.view === 'map' && map) {
+      map.resize();
     }
   }
 
-  async function clearFilter() {
-    state.filter = { tagIds: [], mode: readFilterMode() };
-    updateFilterIndicator();
-    filterDialog.close();
-    try {
-      await resyncMarkers();
-    } catch (err) {
-      console.error(err);
+  function whenMapReady() {
+    if (!map || map.loaded()) {
+      return Promise.resolve();
     }
-  }
-
-  function updateFilterIndicator() {
-    const active = state.filter.tagIds.length > 0;
-    filterBtn.textContent = active
-      ? `Filter (${Object.keys(state.markers).length})`
-      : 'Filter';
-    filterBtn.classList.toggle('filter-btn--active', active);
-  }
-
-  function buildPlacePopup(place) {
-    const rawDescription = place.description ?? null;
-    const tagsSlot = el('div', { classes: ['place-popup__tags'] });
-    const editBtn = el('button', { classes: ['popup-edit-btn'], text: '✎ Edit' });
-    editBtn.addEventListener('click', () => openEditDialog(place));
-
-    const children = [el('div', { text: place.name })];
-    if (rawDescription !== null) {
-      children.push(el('div', { text: rawDescription }));
-    }
-    children.push(tagsSlot);
-    children.push(editBtn);
-
-    const popupEl = el('div', { children });
-
-    const popup = new maplibregl.Popup(
-      {
-        offset: {
-          'bottom': [0, -48],
-          'bottom-left': [0, -48],
-          'bottom-right': [0, -48],
-          'top': [0, 6],
-          'top-left': [0, 6],
-          'top-right': [0, 6],
-          'left': [20, -27],
-          'right': [-20, -27],
-        },
-      }).setDOMContent(popupEl);
-
-    return { popup, tagsSlot };
-  }
-
-  function renderPopupTags(placeId, tagsSlot, popup) {
-    tagsSlot.textContent = 'Loading tags…';
-    fetchPlaceTags(placeId)
-      .then((tags) => {
-        if (!popup.isOpen()) return;
-        tagsSlot.textContent = '';
-        for (const tag of tags) {
-          tagsSlot.appendChild(renderTagChip(tag));
-        }
-      })
-      .catch((err) => {
-        if (!popup.isOpen()) return;
-        tagsSlot.textContent = '';
-        tagsSlot.appendChild(el('div', { text: 'Could not load tags.' }));
-        console.error(err);
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(resolve, MAP_READY_TIMEOUT);
+      map.once('load', () => {
+        window.clearTimeout(timer);
+        resolve();
       });
+    });
   }
 
-  function addPlaceMarker(place) {
-    const SVG_NS = 'http://www.w3.org/2000/svg';
+  async function enterApp() {
+    await loadMe();
+    await loadMapLibrary();
+    initMap();
+    setMapCursor('');
+    await Promise.all([fetchPlaces(store.filter), fetchTags(), whenMapReady()]);
+    go('#/map');
+  }
 
-    const color = place.primary_color ?? '#525f7a';
+  store.addEventListener('change', (event) => {
+    if (event.detail.changed.indexOf('route') !== -1) {
+      render();
+      renderMapEmptyState();
+    }
+    if (event.detail.changed.indexOf('places') !== -1) {
+      renderMarkers();
+      renderMapEmptyState();
+    }
+    if (event.detail.changed.indexOf('selectedPlaceId') !== -1) {
+      renderMarkers();
+    }
+    if (event.detail.changed.indexOf('tags') !== -1) {
+      renderFilterChips();
+    }
+    if (event.detail.changed.indexOf('filter') !== -1) {
+      renderFilterChips();
+      fetchPlaces(store.filter).catch((error) => showToast(error.message, 'error'));
+    }
+  });
+  window.addEventListener('hashchange', onHashChange);
+  onHashChange();
 
-    const emoji = firstGrapheme(place.primary_emoji ?? null);
+  async function loadConfig() {
+    try {
+      const config = await apiFetch('/api/config');
+      setState({ config });
+      renderPasswordRules(config.password);
+    } catch (error) {
+      showToast('Could not load app configuration.', 'error');
+    }
+  }
 
-    const markerEl = el('div', { classes: ['place-marker'] });
-
-    const markerSvg = document.createElementNS(SVG_NS, 'svg');
-    markerSvg.setAttribute('class', 'place-marker__pin');
-    markerSvg.setAttribute('viewBox', '0 0 30 42');
-    markerSvg.setAttribute('width', '30');
-    markerSvg.setAttribute('height', '42');
-
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute(
-      'd',
-      'M15 0 C6.716 0 0 6.716 0 15 C0 23.5 15 42 15 42 ' +
-      'C15 42 30 23.5 30 15 C30 6.716 23.284 0 15 0 Z'
-    );
-    path.setAttribute('fill', color);
-    markerSvg.appendChild(path);
-
-    markerEl.appendChild(markerSvg);
-
-    if (emoji !== null) {
-      markerEl.appendChild(el('div', {
-        classes: ['place-marker__inner'],
-        text: emoji,
-      }));
+  async function handleVerifyLink() {
+    const token = new URLSearchParams(window.location.search).get('verify');
+    if (!token) {
+      return false;
     }
 
-    const { popup, tagsSlot } = buildPlacePopup(place);
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
-    popup.on('open', () => {
-      openPopup = { placeId: place.id, tagsSlot, popup };
-      renderPopupTags(place.id, tagsSlot, popup);
-    });
-    popup.on('close', () => {
-      if (openPopup && openPopup.popup === popup) openPopup = null;
-    });
-
-    const marker = new maplibregl.Marker({ element: markerEl, anchor: 'bottom' })
-      .setLngLat([place.longitude, place.latitude])
-      .setPopup(popup)
-      .addTo(state.map);
-
-    // Non-draggable by default, The edit dialog's "Move place" button arms it.
-    marker.on('dragend', () => persistMarkerLocation(place.id, marker));
-
-    state.markers[place.id] = marker;
-    return marker;
-  }
-
-  async function persistMarkerLocation(placeId, marker) {
-    const { lng, lat } = marker.getLngLat().wrap();
     try {
-      await authedFetch(`${API_BASE}/places/${placeId}/location`, {
-        method: 'PUT',
+      await apiFetch('/api/verify-email', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ latitude: lat, longitude: lng }),
+        body: JSON.stringify({ token })
       });
-    } catch (err) {
-      alert(err.message);
-      console.error(err);
+      showToast('Your email is verified. You can sign in now.');
+      go('#/login');
+    } catch (error) {
+      showToast(error.message, 'error');
+      go(error.status === 410 ? '#/verify' : '#/login');
     }
-
-    await refreshPlaceMarker(placeId);
+    return true;
   }
 
-  async function refreshPlaceMarker(placeId) {
-    if (state.filter.tagIds.length > 0) {
-      await resyncMarkers();
-      updateFilterIndicator();
-      return;
-    }
-
-    const freshPlace = await fetchPlace(placeId);
-
-    const old = state.markers[placeId];
-    const wasOpen = old.getPopup().isOpen();
-    old.remove();
-
-    addPlaceMarker(freshPlace);
-
-    if (wasOpen) state.markers[placeId].togglePopup();
+  function decodeSplash() {
+    const image = new Image();
+    image.src = store.splash;
+    return image.decode().catch(() => undefined);
   }
 
-  async function resyncMarkers() {
-    const reopenId = openPopup ? openPopup.placeId : null;
-    const places = await fetchPlaces();
-
-    for (const id of Object.keys(state.markers)) {
-      state.markers[id].remove();
+  async function boot() {
+    await loadConfig();
+    const cameFromEmail = await handleVerifyLink();
+    if (!cameFromEmail && store.route.view === 'splash') {
+      go(store.token ? '#/map' : '#/login');
     }
-    state.markers = {};
-    openPopup = null;
-
-    for (const place of places) {
-      addPlaceMarker(place);
-    }
-
-    if (reopenId !== null && state.markers[reopenId]) {
-      state.markers[reopenId].togglePopup();
-    }
+    await decodeSplash();
+    document.getElementById('boot').hidden = true;
   }
 
-  init();
+  document.fonts.ready.then(() => {
+    document.documentElement.classList.add('fonts-ready');
+  });
+
+  boot();
+
 })();

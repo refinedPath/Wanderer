@@ -1,0 +1,150 @@
+/* Forms for add place, edit place, and edit tag */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.form__title {
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-bold);
+}
+
+.form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.form__row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-8);
+}
+
+.form__row .field:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Place view */
+.place {
+  padding-block-end: var(--space-16);
+}
+
+.place__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-32) var(--space-20) var(--space-16);
+}
+
+.place__title {
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-bold);
+  padding-inline-end: var(--space-40);
+}
+
+.place__desc {
+  font-size: var(--text-base);
+  line-height: var(--leading-tight);
+  white-space: pre-line;
+}
+
+/* Add place prompt */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-16);
+  padding: var(--space-24) 3.0625rem;
+  text-align: center;
+}
+
+.prompt__text {
+  font-size: var(--text-base);
+  line-height: var(--leading-tight);
+}
+
+/* Tag groups inside edit place */
+.tag-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.tag-group__title {
+  font-size: var(--text-base);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+}
+
+/* Manage tags */
+.tags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.tags__title {
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-bold);
+}
+
+/* Edit tag preview */
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.preview__label {
+  font-size: var(--text-base);
+  line-height: var(--leading-tight);
+  color: var(--text-secondary);
+}
+
+/* Profile */
+.profile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.profile__identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.profile__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.profile__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding-block-start: var(--space-24);
+  border-block-start: 1px solid var(--divider);
+}
+
+.splash {
+  background-image: url("../img/splash.webp");
+  background-position: 68% bottom;
+  background-size: auto calc(100% * 1240 / 700);
+}
+
+@media (min-aspect-ratio: 1 / 1) {
+  .splash {
+    background-position: center bottom;
+    background-size: 100% auto;
+  }
+}

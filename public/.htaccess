@@ -1,0 +1,22 @@
+DirectoryIndex index.html
+
+# Deny access to .htaccess and other hidden files
+<FilesMatch "^\.ht">
+    Require all denied
+</FilesMatch>
+
+RewriteEngine On
+
+# Rewrite API access to index.php
+RewriteCond %{REQUEST_URI} ^/api
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ /index.php [L,QSA]
+
+# 404 for missing static assets
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule \.(?:js|css|woff2?|webp|png|jpg|jpeg|svg|ico|map)$ - [R=404,L]
+
+# Fall back to /index.html if anything else is 404
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ /index.html [L]

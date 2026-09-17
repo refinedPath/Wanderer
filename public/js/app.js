@@ -72,21 +72,8 @@
       return await apiFetch(url, Object.assign({}, opts, { headers }));
     } catch (error) {
       if (error.status === 401) {
-        destroyMap();
-        clearSignedInViews();
-        setState({
-          token: null,
-          accountEmail: null,
-          pendingEmail: null,
-          pendingLocation: null,
-          selectedPlaceId: null,
-          places: [],
-          placesLoaded: false,
-          tags: [],
-          filter: { tags: [], match: 'any' }
-        });
         showToast('Your session has ended. Please sign in again.', 'error');
-        go('#/login');
+        endSession();
       }
       throw error;
     }
@@ -560,23 +547,7 @@
     }
   });
 
-  document.getElementById('logoutButton').addEventListener('click', () => {
-    destroyMap();
-    clearSignedInViews();
-    setState({
-      token: null,
-      accountEmail: null,
-      pendingEmail: null,
-      pendingLocation: null,
-      selectedPlaceId: null,
-      places: [],
-      placesLoaded: false,
-      tags: [],
-      filter: { tags: [], match: 'any' }
-    });
-    go('#/login');
-    loadConfig();
-  });
+  document.getElementById('logoutButton').addEventListener('click', endSession);
 
   avatarButton.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -1497,6 +1468,24 @@
   function clearProfile() {
     profileEmail.textContent = '';
     profileName.value = '';
+  }
+
+  function endSession() {
+    destroyMap();
+    clearSignedInViews();
+    setState({
+      token: null,
+      accountEmail: null,
+      pendingEmail: null,
+      pendingLocation: null,
+      selectedPlaceId: null,
+      places: [],
+      placesLoaded: false,
+      tags: [],
+      filter: { tags: [], match: 'any' }
+    });
+    go('#/login');
+    loadConfig();
   }
 
   function clearSignedInViews() {

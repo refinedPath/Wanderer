@@ -1,5 +1,10 @@
 # Wanderer
 
+**Live demo**: https://wanderer.refinedpath.dev
+
+Login: demo@wanderer.refinedpath.dev  
+Password: DemoPa$$365!
+
 A self-hosted map for saving places. Drop a pin, add a note and some tags, then filter the map by
 tag. Multiuser, on your own server or web hosting. The map data comes from OpenFreeMap's public tiles, which can
 also be self-hosted.
